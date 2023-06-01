@@ -39,28 +39,19 @@ static struct ggml_tensor * pad_1d(ggml_context * ctx0, ggml_tensor * inp, int p
 struct ggml_tensor * strided_conv_1d(
             ggml_context * ctx0,
              ggml_tensor * inp,
-             ggml_tensor * conv_w_v,
-             ggml_tensor * conv_w_g,
+             ggml_tensor * conv_w,
              ggml_tensor * conv_b,
                      int   stride) {
-    int kernel_size = conv_w_v->ne[0];
+    int kernel_size = conv_w->ne[0];
     int padding_total = kernel_size - stride;
+
     int extra_padding = get_extra_padding_for_conv_1d(inp, kernel_size, stride, padding_total);
 
     struct ggml_tensor * padded_inp = pad_1d(ctx0, inp, padding_total, extra_padding);
 
-    // weight norm
-    conv_w_v = ggml_l2_norm(ctx0, conv_w_v);
-    conv_w_v = ggml_cont(ctx0, ggml_permute(ctx0, conv_w_v, 2, 1, 0, 3));
-
-    conv_w_g = ggml_repeat(ctx0, conv_w_g, conv_w_v);
-
-    struct ggml_tensor * conv_w = ggml_cont(ctx0,
-                                    ggml_permute(ctx0,
-                                        ggml_mul(ctx0, conv_w_v, conv_w_g), 2, 1, 0, 3));
-
     struct ggml_tensor * dst = ggml_conv_1d_1s(ctx0, conv_w, padded_inp);
 
+    // add bias
     dst = ggml_transpose(ctx0, dst);
     dst = ggml_add(ctx0, ggml_repeat(ctx0, conv_b, dst), dst);
     dst = ggml_cont(ctx0, ggml_transpose(ctx0, dst));

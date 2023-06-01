@@ -31,23 +31,19 @@ struct encodec_hparams {
 // res + downsample block at some ratio
 struct encodec_encoder_block {
     // conv1
-    struct ggml_tensor * conv_1_w_g;
-    struct ggml_tensor * conv_1_w_v;
+    struct ggml_tensor * conv_1_w;
     struct ggml_tensor * conv_1_b;
 
     // conv2
-    struct ggml_tensor * conv_2_w_g;
-    struct ggml_tensor * conv_2_w_v;
+    struct ggml_tensor * conv_2_w;
     struct ggml_tensor * conv_2_b;
 
     // shortcut
-    struct ggml_tensor * conv_sc_w_g;
-    struct ggml_tensor * conv_sc_w_v;
+    struct ggml_tensor * conv_sc_w;
     struct ggml_tensor * conv_sc_b;
 
     // downsampling layers
-    struct ggml_tensor * ds_conv_w_g;  
-    struct ggml_tensor * ds_conv_w_v;  
+    struct ggml_tensor * ds_conv_w;  
     struct ggml_tensor * ds_conv_b;
 };
 
@@ -66,14 +62,12 @@ struct encodec_lstm {
 };
 
 struct encodec_encoder {
-    struct ggml_tensor * init_conv_w_g;
-    struct ggml_tensor * init_conv_w_v;
+    struct ggml_tensor * init_conv_w;
     struct ggml_tensor * init_conv_b;
 
     encodec_lstm lstm;
 
-    struct ggml_tensor * final_conv_w_g;
-    struct ggml_tensor * final_conv_w_v;
+    struct ggml_tensor * final_conv_w;
     struct ggml_tensor * final_conv_b;
 
     std::vector<encodec_encoder_block> blocks;
@@ -92,35 +86,29 @@ struct encodec_quantizer {
 
 struct encodec_decoder_block {
     //upsampling layers
-    struct ggml_tensor * us_conv_w_v;
-    struct ggml_tensor * us_conv_w_g;
+    struct ggml_tensor * us_conv_w;
     struct ggml_tensor * us_conv_b;
 
     // conv1
-    struct ggml_tensor * conv_1_w_g;
-    struct ggml_tensor * conv_1_w_v;
+    struct ggml_tensor * conv_1_w;
     struct ggml_tensor * conv_1_b;
 
     // conv2
-    struct ggml_tensor * conv_2_w_g;
-    struct ggml_tensor * conv_2_w_v;
+    struct ggml_tensor * conv_2_w;
     struct ggml_tensor * conv_2_b;
 
     // shortcut
-    struct ggml_tensor * conv_sc_w_g;
-    struct ggml_tensor * conv_sc_w_v;
+    struct ggml_tensor * conv_sc_w;
     struct ggml_tensor * conv_sc_b;
 };
 
 struct encodec_decoder {
-    struct ggml_tensor * init_conv_w_v;
-    struct ggml_tensor * init_conv_w_g;
+    struct ggml_tensor * init_conv_w;
     struct ggml_tensor * init_conv_b;
 
     encodec_lstm lstm;
 
-    struct ggml_tensor * final_conv_w_v;
-    struct ggml_tensor * final_conv_w_g;
+    struct ggml_tensor * final_conv_w;
     struct ggml_tensor * final_conv_b;
 
     std::vector<encodec_decoder_block> blocks;

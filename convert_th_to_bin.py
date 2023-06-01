@@ -10,6 +10,15 @@ For each tensor, the bytes are packed as follows:
     - Dimensions              (int[n_dims])
     - Name                    (char[name_length])
     - Data                    (float[n_dims])
+
+NOTE
+----
+Encodec uses weight normalization for its convolutional layers. All the weights are
+decomposed into two tensors called with the suffixes _weight_v and _weight_g. A simple
+call to the hook torch._weight_norm allows to get the final weight tensor of the
+convolution from weight_v and weight_g. To drastically reduce the number of operations
+at inference time, the ggml weights file only contain the final convolution weights but
+does not store the decomposition into weight_v and weight_g.
 """
 import argparse
 from pathlib import Path
@@ -25,20 +34,31 @@ parser.add_argument("--out-dir", type=str, required=True)
 
 def parse_model(checkpoint, outfile):
     for name in checkpoint.keys():
-        var_data = checkpoint[name].numpy()
+        if "weight_g" in name:
+            # the tensor has already been parsed with the corresponding "weight_v"
+            # tensor to form the final weights tensor of the convolution, therefore
+            # we skip it
+            continue
+
+        var_data = checkpoint[name]
+
         if not "weight_v" in name:
             # if conv kernel, do not squeeze because 3d tensor
-            var_data = var_data.squeeze()
+            var_data = var_data.numpy().squeeze()
+        else:
+            # weight_v has its corresponding magnitude tensor to rescale the weights
+            # of the convolutional layers. We parse both kinds of weights jointly to
+            # build the final weight tensor of the convolution.
+            base_name = name.split(".")[:-1] 
+            weight_g_name = ".".join(base_name + ["weight_g"])
+            var_data_g = checkpoint[weight_g_name]
+
+            final_var_data = torch._weight_norm(var_data, var_data_g, dim=0)
+            var_data = final_var_data.numpy()
+
+            name = ".".join(base_name + ["weight"])
 
         print(f"Processing variable: {name} with shape: {var_data.shape}")
-
-        # if "conv" in name and ("bias" in name or "weight_g" in name):
-        #     if len(var_data.shape) == 0:
-        #         # only for decoder.model.15.conv.conv.bias
-        #         var_data = var_data.reshape(1, 1)
-        #     else:
-        #         var_data = var_data.reshape(var_data.shape[0], 1)
-        #     print(f"  Reshaped variable: {name} to shape:", var_data.shape)
 
         if var_data.dtype != np.float32:
             print("  Converting to float32")

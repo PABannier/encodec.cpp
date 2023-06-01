@@ -47,17 +47,17 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
         // encoder
         {
             // initial conv1d layer
-            ctx_size +=           in_channels*n_filters*kernel_size*ggml_type_size(GGML_TYPE_F32);  // weight_v
-            ctx_size +=                                 2*n_filters*ggml_type_size(GGML_TYPE_F32);  // weight_g and bias
+            ctx_size += in_channels*n_filters*kernel_size*ggml_type_size(GGML_TYPE_F32);  // weight
+            ctx_size +=                         n_filters*ggml_type_size(GGML_TYPE_F32);  //bias
 
             // resnet blocks
-            ctx_size +=                            3*4*16*n_filters*ggml_type_size(GGML_TYPE_F32);  // upper bound on w_g, w_v and bias
+            ctx_size +=                  3*4*16*n_filters*ggml_type_size(GGML_TYPE_F32);  // upper bound on w_g, w_v and bias
 
             //downsampling blocks
             ctx_size += 3*4*16*n_filters*16*n_filters*2*ratios[0]*2*ggml_type_size(GGML_TYPE_F32);  // upper bound on w_g, w_v and bias
 
             // lstm
-            ctx_size +=             4*16*n_filters*16*n_filters*2*2*ggml_type_size(GGML_TYPE_F32); // weights
+            ctx_size +=             2*16*n_filters*16*n_filters*2*2*ggml_type_size(GGML_TYPE_F32); // weights
             ctx_size +=                          4*16*n_filters*2*2*ggml_type_size(GGML_TYPE_F32); // bias
 
             // final conv
@@ -112,50 +112,40 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
 
             int mult = 1;  // scaling factor for hidden size
 
-            model.encoder.init_conv_w_v = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, kernel_size, in_channels, mult*n_filters);
-            model.encoder.init_conv_b   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters);
-            model.encoder.init_conv_w_g = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters);
+            model.encoder.init_conv_w = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, kernel_size, in_channels, mult*n_filters);
+            model.encoder.init_conv_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters);
 
-            model.tensors["encoder.model.0.conv.conv.weight_g"] = model.encoder.init_conv_w_g;
-            model.tensors["encoder.model.0.conv.conv.weight_v"] = model.encoder.init_conv_w_v;
-            model.tensors["encoder.model.0.conv.conv.bias"]     = model.encoder.init_conv_b;
+            model.tensors["encoder.model.0.conv.conv.weight"] = model.encoder.init_conv_w;
+            model.tensors["encoder.model.0.conv.conv.bias"]   = model.encoder.init_conv_b;
 
             for (int i = 0; i < 4; i++) {
                 // conv1
-                model.encoder.blocks[i].conv_1_w_v = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, res_kernel_sz, mult*n_filters, mult*n_filters/2);
-                model.encoder.blocks[i].conv_1_w_g = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters/2);
-                model.encoder.blocks[i].conv_1_b   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters/2);
+                model.encoder.blocks[i].conv_1_w = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, res_kernel_sz, mult*n_filters, mult*n_filters/2);
+                model.encoder.blocks[i].conv_1_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters/2);
 
-                model.tensors["encoder.model." + std::to_string(3*i+1) + ".block.1.conv.conv.weight_v"] = model.encoder.blocks[i].conv_1_w_v;
-                model.tensors["encoder.model." + std::to_string(3*i+1) + ".block.1.conv.conv.weight_g"] = model.encoder.blocks[i].conv_1_w_g;
-                model.tensors["encoder.model." + std::to_string(3*i+1) + ".block.1.conv.conv.bias"]     = model.encoder.blocks[i].conv_1_b;
+                model.tensors["encoder.model." + std::to_string(3*i+1) + ".block.1.conv.conv.weight"] = model.encoder.blocks[i].conv_1_w;
+                model.tensors["encoder.model." + std::to_string(3*i+1) + ".block.1.conv.conv.bias"]   = model.encoder.blocks[i].conv_1_b;
 
                 // conv2
-                model.encoder.blocks[i].conv_2_w_v = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 1, mult*n_filters/2, mult*n_filters);
-                model.encoder.blocks[i].conv_2_w_g = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters);
-                model.encoder.blocks[i].conv_2_b   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters);
+                model.encoder.blocks[i].conv_2_w = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 1, mult*n_filters/2, mult*n_filters);
+                model.encoder.blocks[i].conv_2_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters);
 
-                model.tensors["encoder.model." + std::to_string(3*i+1) + ".block.3.conv.conv.weight_g"] = model.encoder.blocks[i].conv_2_w_g;
-                model.tensors["encoder.model." + std::to_string(3*i+1) + ".block.3.conv.conv.weight_v"] = model.encoder.blocks[i].conv_2_w_v;
-                model.tensors["encoder.model." + std::to_string(3*i+1) + ".block.3.conv.conv.bias"]     = model.encoder.blocks[i].conv_2_b;
+                model.tensors["encoder.model." + std::to_string(3*i+1) + ".block.3.conv.conv.weight"] = model.encoder.blocks[i].conv_2_w;
+                model.tensors["encoder.model." + std::to_string(3*i+1) + ".block.3.conv.conv.bias"]   = model.encoder.blocks[i].conv_2_b;
 
                 // shortcut conv
-                model.encoder.blocks[i].conv_sc_w_v  = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 1, mult*n_filters, mult*n_filters);
-                model.encoder.blocks[i].conv_sc_w_g  = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters);
-                model.encoder.blocks[i].conv_sc_b    = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters);
+                model.encoder.blocks[i].conv_sc_w = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 1, mult*n_filters, mult*n_filters);
+                model.encoder.blocks[i].conv_sc_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters);
 
-                model.tensors["encoder.model." + std::to_string(3*i+1) + ".shortcut.conv.conv.weight_v"] = model.encoder.blocks[i].conv_sc_w_v;
-                model.tensors["encoder.model." + std::to_string(3*i+1) + ".shortcut.conv.conv.weight_g"] = model.encoder.blocks[i].conv_sc_w_g;
-                model.tensors["encoder.model." + std::to_string(3*i+1) + ".shortcut.conv.conv.bias"]     = model.encoder.blocks[i].conv_sc_b;
+                model.tensors["encoder.model." + std::to_string(3*i+1) + ".shortcut.conv.conv.weight"] = model.encoder.blocks[i].conv_sc_w;
+                model.tensors["encoder.model." + std::to_string(3*i+1) + ".shortcut.conv.conv.bias"]   = model.encoder.blocks[i].conv_sc_b;
 
                 // downsampling
-                model.encoder.blocks[i].ds_conv_w_v = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 2*ratios[3-i], mult*n_filters, mult*n_filters*2);
-                model.encoder.blocks[i].ds_conv_w_g = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters*2);
-                model.encoder.blocks[i].ds_conv_b   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters*2);
+                model.encoder.blocks[i].ds_conv_w = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 2*ratios[3-i], mult*n_filters, mult*n_filters*2);
+                model.encoder.blocks[i].ds_conv_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters*2);
 
-                model.tensors["encoder.model." + std::to_string(3*(i+1)) + ".conv.conv.weight_v"] = model.encoder.blocks[i].ds_conv_w_v;
-                model.tensors["encoder.model." + std::to_string(3*(i+1)) + ".conv.conv.weight_g"] = model.encoder.blocks[i].ds_conv_w_g;
-                model.tensors["encoder.model." + std::to_string(3*(i+1)) + ".conv.conv.bias"]     = model.encoder.blocks[i].ds_conv_b;
+                model.tensors["encoder.model." + std::to_string(3*(i+1)) + ".conv.conv.weight"] = model.encoder.blocks[i].ds_conv_w;
+                model.tensors["encoder.model." + std::to_string(3*(i+1)) + ".conv.conv.bias"]   = model.encoder.blocks[i].ds_conv_b;
 
                 mult *= 2;
             }
@@ -186,12 +176,10 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
             model.tensors["encoder.model.13.lstm.bias_hh_l1"] = model.encoder.lstm.l1_hh_b;
 
             // final conv
-            model.encoder.final_conv_w_v = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, kernel_size, mult*n_filters, hidden_dim);
-            model.encoder.final_conv_w_g = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, hidden_dim);
+            model.encoder.final_conv_w = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, kernel_size, mult*n_filters, hidden_dim);
             model.encoder.final_conv_b   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, hidden_dim);
 
-            model.tensors["encoder.model.15.conv.conv.weight_v"] = model.encoder.final_conv_w_v;
-            model.tensors["encoder.model.15.conv.conv.weight_g"] = model.encoder.final_conv_w_g;
+            model.tensors["encoder.model.15.conv.conv.weight"] = model.encoder.final_conv_w;
             model.tensors["encoder.model.15.conv.conv.bias"]     = model.encoder.final_conv_b;
         }
 
@@ -201,13 +189,11 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
 
             int mult = 16;  // 2**len(ratios)
 
-            model.decoder.init_conv_w_v = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, kernel_size, hidden_dim, mult*n_filters);
-            model.decoder.init_conv_w_g = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters);
-            model.decoder.init_conv_b   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters);
+            model.decoder.init_conv_w = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, kernel_size, hidden_dim, mult*n_filters);
+            model.decoder.init_conv_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters);
 
-            model.tensors["decoder.model.0.conv.conv.weight_v"] = model.decoder.init_conv_w_v;
-            model.tensors["decoder.model.0.conv.conv.weight_g"] = model.decoder.init_conv_w_g;
-            model.tensors["decoder.model.0.conv.conv.bias"]     = model.decoder.init_conv_b;
+            model.tensors["decoder.model.0.conv.conv.weight"] = model.decoder.init_conv_w;
+            model.tensors["decoder.model.0.conv.conv.bias"]   = model.decoder.init_conv_b;
 
             // LSTM
             model.decoder.lstm.l0_ih_w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, mult*n_filters, 4*mult*n_filters);
@@ -236,51 +222,41 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
 
             for (int i = 0; i < 4; i++) {
                 // upsampling
-                model.decoder.blocks[i].us_conv_w_v = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, ratios[i]*2, mult*n_filters/2, mult*n_filters);
-                model.decoder.blocks[i].us_conv_w_g = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters);
-                model.decoder.blocks[i].us_conv_b   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters/2);
+                model.decoder.blocks[i].us_conv_w = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, ratios[i]*2, mult*n_filters/2, mult*n_filters);
+                model.decoder.blocks[i].us_conv_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters/2);
 
-                model.tensors["decoder.model." + std::to_string(3*(i+1)) + ".convtr.convtr.weight_v"] = model.decoder.blocks[i].us_conv_w_v;
-                model.tensors["decoder.model." + std::to_string(3*(i+1)) + ".convtr.convtr.weight_g"] = model.decoder.blocks[i].us_conv_w_g;
-                model.tensors["decoder.model." + std::to_string(3*(i+1)) + ".convtr.convtr.bias"]     = model.decoder.blocks[i].us_conv_b;
+                model.tensors["decoder.model." + std::to_string(3*(i+1)) + ".convtr.convtr.weight"] = model.decoder.blocks[i].us_conv_w;
+                model.tensors["decoder.model." + std::to_string(3*(i+1)) + ".convtr.convtr.bias"]   = model.decoder.blocks[i].us_conv_b;
 
                 // conv1
-                model.decoder.blocks[i].conv_1_w_v = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, res_kernel_sz, mult*n_filters/2, mult*n_filters/4);
-                model.decoder.blocks[i].conv_1_w_g = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters/4);
-                model.decoder.blocks[i].conv_1_b   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters/4);
+                model.decoder.blocks[i].conv_1_w = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, res_kernel_sz, mult*n_filters/2, mult*n_filters/4);
+                model.decoder.blocks[i].conv_1_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters/4);
 
-                model.tensors["decoder.model." + std::to_string(3*(i+1)+1) + ".block.1.conv.conv.weight_v"] = model.decoder.blocks[i].conv_1_w_v;
-                model.tensors["decoder.model." + std::to_string(3*(i+1)+1) + ".block.1.conv.conv.weight_g"] = model.decoder.blocks[i].conv_1_w_g;
+                model.tensors["decoder.model." + std::to_string(3*(i+1)+1) + ".block.1.conv.conv.weight"] = model.decoder.blocks[i].conv_1_w;
                 model.tensors["decoder.model." + std::to_string(3*(i+1)+1) + ".block.1.conv.conv.bias"]     = model.decoder.blocks[i].conv_1_b;
 
                 // conv2
-                model.decoder.blocks[i].conv_2_w_v = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 1, mult*n_filters/4, mult*n_filters/2);
-                model.decoder.blocks[i].conv_2_w_g = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters/2);
-                model.decoder.blocks[i].conv_2_b   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters/2);
+                model.decoder.blocks[i].conv_2_w = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 1, mult*n_filters/4, mult*n_filters/2);
+                model.decoder.blocks[i].conv_2_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters/2);
 
-                model.tensors["decoder.model." + std::to_string(3*(i+1)+1) + ".block.3.conv.conv.weight_v"] = model.decoder.blocks[i].conv_2_w_v;
-                model.tensors["decoder.model." + std::to_string(3*(i+1)+1) + ".block.3.conv.conv.weight_g"] = model.decoder.blocks[i].conv_2_w_g;
-                model.tensors["decoder.model." + std::to_string(3*(i+1)+1) + ".block.3.conv.conv.bias"]     = model.decoder.blocks[i].conv_2_b;
+                model.tensors["decoder.model." + std::to_string(3*(i+1)+1) + ".block.3.conv.conv.weight"] = model.decoder.blocks[i].conv_2_w;
+                model.tensors["decoder.model." + std::to_string(3*(i+1)+1) + ".block.3.conv.conv.bias"]   = model.decoder.blocks[i].conv_2_b;
 
                 // shortcut
-                model.decoder.blocks[i].conv_sc_w_v = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 1, mult*n_filters/2, mult*n_filters/2);
-                model.decoder.blocks[i].conv_sc_w_g = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters/2);
-                model.decoder.blocks[i].conv_sc_b   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters/2);
+                model.decoder.blocks[i].conv_sc_w = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 1, mult*n_filters/2, mult*n_filters/2);
+                model.decoder.blocks[i].conv_sc_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, mult*n_filters/2);
 
-                model.tensors["decoder.model." + std::to_string(3*(i+1)+1) + ".shortcut.conv.conv.weight_v"] = model.decoder.blocks[i].conv_sc_w_v;
-                model.tensors["decoder.model." + std::to_string(3*(i+1)+1) + ".shortcut.conv.conv.weight_g"] = model.decoder.blocks[i].conv_sc_w_g;
-                model.tensors["decoder.model." + std::to_string(3*(i+1)+1) + ".shortcut.conv.conv.bias"]     = model.decoder.blocks[i].conv_sc_b;
+                model.tensors["decoder.model." + std::to_string(3*(i+1)+1) + ".shortcut.conv.conv.weight"] = model.decoder.blocks[i].conv_sc_w;
+                model.tensors["decoder.model." + std::to_string(3*(i+1)+1) + ".shortcut.conv.conv.bias"]   = model.decoder.blocks[i].conv_sc_b;
 
                 mult /= 2;
             }
 
-            model.decoder.final_conv_w_v = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, kernel_size, n_filters, in_channels);
-            model.decoder.final_conv_w_g = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, in_channels);
+            model.decoder.final_conv_w = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, kernel_size, n_filters, in_channels);
             model.decoder.final_conv_b   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, in_channels);
 
-            model.tensors["decoder.model.15.conv.conv.weight_v"] = model.decoder.final_conv_w_v;
-            model.tensors["decoder.model.15.conv.conv.weight_g"] = model.decoder.final_conv_w_g;
-            model.tensors["decoder.model.15.conv.conv.bias"]     = model.decoder.final_conv_b;
+            model.tensors["decoder.model.15.conv.conv.weight"] = model.decoder.final_conv_w;
+            model.tensors["decoder.model.15.conv.conv.bias"]   = model.decoder.final_conv_b;
         }
 
         // quantizer
@@ -399,44 +375,27 @@ static void encodec_model_eval(
         const int stride        = hparams.stride;
 
         struct ggml_tensor * inpL = strided_conv_1d(
-            ctx0, inp, model.encoder.init_conv_w_v, model.encoder.init_conv_w_g,
-            model.encoder.init_conv_b, stride);
+            ctx0, inp, model.encoder.init_conv_w, model.encoder.init_conv_b, stride);
 
         encodec_encoder_block block = model.encoder.blocks[0];
 
         struct ggml_tensor * current = inpL;
 
         // shortcut
-        // struct ggml_tensor * shortcut = strided_conv_1d(
-        //     ctx0, inpL, block.conv_sc_w_v, block.conv_sc_w_g,
-        //     block.conv_sc_b, stride);
+        struct ggml_tensor * shortcut = strided_conv_1d(
+            ctx0, inpL, block.conv_sc_w, block.conv_sc_b, stride);
 
-        // struct ggml_tensor * conv_w_v = ggml_cont(ctx0, ggml_permute(ctx0, block.conv_1_w_v, 1, 0, 2, 3));
-        // conv_w_v = ggml_l2_norm(ctx0, conv_w_v);
-        // conv_w_v = ggml_cont(ctx0, ggml_permute(ctx0, conv_w_v, 2, 0, 1, 3));
+        // conv1
+        current = ggml_elu(ctx0, current);
 
-        // struct ggml_tensor * conv_w_g = ggml_repeat(ctx0, block.conv_1_w_g, conv_w_v);
+        current = strided_conv_1d(
+            ctx0, current, block.conv_1_w, block.conv_1_b, stride);
 
-        // struct ggml_tensor * conv_w = ggml_mul(ctx0, conv_w_v, conv_w_g);
-
-        // struct ggml_tensor * conv_w = ggml_cont(ctx0,
-        //                                 ggml_permute(ctx0,
-        //                                     ggml_mul(ctx0, conv_w_v, conv_w_g), 2, 1, 0, 3));
-
-        // // conv1
+        // conv2
         // current = ggml_elu(ctx0, current);
 
         // current = strided_conv_1d(
-        //     ctx0, current, block.conv_1_w_v, block.conv_1_w_g,
-        //     block.conv_1_b, res_kernel_sz, stride);
-
-        // // conv2
-        // current = ggml_elu(ctx0, current);
-
-        // current = strided_conv_1d(
-        //     ctx0, current, block.conv_2_w_v, block.conv_2_w_g,
-        //     block.conv_2_b, 1, stride);
-
+        //     ctx0, current, block.conv_2_w, block.conv_2_b, stride);
 
         // // residual connection
         // inpL = ggml_add(ctx0, current, shortcut);
@@ -444,7 +403,6 @@ static void encodec_model_eval(
         // // // // downsampling layers
         // // // inpL = ggml_elu(ctx0, inpL);
 
-        // encoded_inp = inpL;
         encoded_inp = current;
     }
 
