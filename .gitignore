@@ -1,0 +1,8 @@
+main.dSYM
+*.bin
+
+encodec
+*.o
+*.th
+main
+.vscode/
