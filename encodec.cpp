@@ -11,6 +11,60 @@
 #include <vector>
 
 
+// struct ggml_tensor * stupid_test(
+//                     struct ggml_context * ctx0,
+//                     struct ggml_tensor * current,
+//                     struct ggml_tensor * conv_w,
+//                     struct ggml_tensor * conv_b,
+//                     int stride) {
+//     int kernel_size_ = conv_w->ne[0];
+//     int padding_total = kernel_size_ - stride;
+
+//     int extra_padding = get_extra_padding_for_conv_1d(current, kernel_size_, stride, padding_total);
+
+//     struct ggml_tensor * padded_inp = pad_1d(ctx0, current, padding_total, extra_padding);
+
+//     current = ggml_conv_1d_1s(ctx0, conv_w, padded_inp);
+//     current = ggml_transpose(ctx0, current);
+//     current = ggml_add(ctx0, ggml_repeat(ctx0, conv_b, current), current);
+//     current = ggml_cont(ctx0, ggml_transpose(ctx0, current));
+//     return current;
+// }
+
+// static int get_extra_padding_for_conv_1d(ggml_tensor * inp, float kernel_size, float stride, float padding_total) {
+//     float length = inp->ne[0];
+//     float n_frames = (length - kernel_size + padding_total) / stride + 1.0f;
+//     int ideal_length = (std::ceilf(n_frames) - 1) * stride + (kernel_size - padding_total);
+//     return ideal_length - length;
+// }
+
+// static struct ggml_tensor * pad_1d(ggml_context * ctx0, ggml_tensor * inp, int padding_left, int padding_right) {
+//     int length = inp->ne[0];
+//     int dim = inp->ne[1];
+//     ENCODEC_ASSERT(padding_left  >= 0);
+//     ENCODEC_ASSERT(padding_right >= 0);
+
+//     const int max_pad = std::max(padding_left, padding_right);
+//     int extra_pad = 0;
+
+//     if (length <= max_pad) {
+//         extra_pad = max_pad - length + 1;
+//         int padding[2] = {0, extra_pad};
+//         inp = ggml_pad_1d_constant(ctx0, inp, padding, 0);
+//     }
+
+//     int padding[2] = {padding_left, padding_right};
+//     struct ggml_tensor * padded = ggml_pad_1d_reflective(ctx0, inp, padding);
+
+//     const int end = padded->ne[0] - extra_pad;
+
+//     // struct ggml_tensor *dest = ggml_view_2d(ctx0, padded, end, dim, inp->nb[1], 0);
+//     struct ggml_tensor *dest = ggml_view_2d(ctx0, padded, end, dim, padded->nb[1], 0);
+
+//     return dest;
+// }
+
+
 bool encodec_model_load(const std::string& fname, encodec_model& model) {
     fprintf(stderr, "%s: loading model from '%s'\n", __func__, fname.c_str());
 
@@ -76,7 +130,6 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
 
         ctx_size += 10ull*MB;  // object overhead
     }
-
 
     // create the ggml context
     {
@@ -392,18 +445,21 @@ static void encodec_model_eval(
             ctx0, current, block.conv_1_w, block.conv_1_b, stride);
 
         // conv2
-        // current = ggml_elu(ctx0, current);
+        current = ggml_elu(ctx0, current);
 
-        // current = strided_conv_1d(
-        //     ctx0, current, block.conv_2_w, block.conv_2_b, stride);
+        current = strided_conv_1d(
+            ctx0, current, block.conv_2_w, block.conv_2_b, stride);
 
-        // // residual connection
-        // inpL = ggml_add(ctx0, current, shortcut);
+        // residual connection
+        inpL = ggml_add(ctx0, current, shortcut);
 
-        // // // // downsampling layers
-        // // // inpL = ggml_elu(ctx0, inpL);
+        // downsampling layers
+        inpL = ggml_elu(ctx0, inpL);
 
-        encoded_inp = current;
+        inpL = strided_conv_1d(
+            ctx0, inpL, block.ds_conv_w, block.ds_conv_b, ratios[3]);
+
+        encoded_inp = inpL;
     }
 
     ggml_build_forward_expand(&gf, encoded_inp);

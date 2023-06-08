@@ -31,7 +31,7 @@ static struct ggml_tensor * pad_1d(ggml_context * ctx0, ggml_tensor * inp, int p
 
     const int end = padded->ne[0] - extra_pad;
 
-    struct ggml_tensor *dest = ggml_view_2d(ctx0, padded, end, dim, inp->nb[1], 0);
+    struct ggml_tensor *dest = ggml_view_2d(ctx0, padded, end, dim, padded->nb[1], 0);
 
     return dest;
 }
@@ -49,7 +49,27 @@ struct ggml_tensor * strided_conv_1d(
 
     struct ggml_tensor * padded_inp = pad_1d(ctx0, inp, padding_total, extra_padding);
 
-    struct ggml_tensor * dst = ggml_conv_1d_1s(ctx0, conv_w, padded_inp);
+    // struct ggml_tensor * dst = ggml_conv_1d_1s(ctx0, conv_w, padded_inp);
+    struct ggml_tensor * dst;
+    switch (stride) {
+        case 1:
+            dst = ggml_conv_1d_1s(ctx0, conv_w, padded_inp);
+            break;
+        case 2:
+            dst = ggml_conv_1d_2s(ctx0, conv_w, padded_inp);
+            break;
+        case 4:
+            dst = ggml_conv_1d_4s(ctx0, conv_w, padded_inp);
+            break;
+        case 5:
+            dst = ggml_conv_1d_5s(ctx0, conv_w, padded_inp);
+            break;
+        case 8:
+            dst = ggml_conv_1d_8s(ctx0, conv_w, padded_inp);
+            break;
+        default:
+            throw std::runtime_error("Unsupported stride.");
+    }
 
     // add bias
     dst = ggml_transpose(ctx0, dst);
