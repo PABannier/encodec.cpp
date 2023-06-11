@@ -430,34 +430,36 @@ static void encodec_model_eval(
         struct ggml_tensor * inpL = strided_conv_1d(
             ctx0, inp, model.encoder.init_conv_w, model.encoder.init_conv_b, stride);
 
-        encodec_encoder_block block = model.encoder.blocks[0];
+        for (int layer_ix = 0; layer_ix < 4; layer_ix++) {
+            encodec_encoder_block block = model.encoder.blocks[layer_ix];
 
-        struct ggml_tensor * current = inpL;
+            struct ggml_tensor * current = inpL;
 
-        // shortcut
-        struct ggml_tensor * shortcut = strided_conv_1d(
-            ctx0, inpL, block.conv_sc_w, block.conv_sc_b, stride);
+            // shortcut
+            struct ggml_tensor * shortcut = strided_conv_1d(
+                ctx0, inpL, block.conv_sc_w, block.conv_sc_b, stride);
 
-        // conv1
-        current = ggml_elu(ctx0, current);
+            // conv1
+            current = ggml_elu(ctx0, current);
 
-        current = strided_conv_1d(
-            ctx0, current, block.conv_1_w, block.conv_1_b, stride);
+            current = strided_conv_1d(
+                ctx0, current, block.conv_1_w, block.conv_1_b, stride);
 
-        // conv2
-        current = ggml_elu(ctx0, current);
+            // conv2
+            current = ggml_elu(ctx0, current);
 
-        current = strided_conv_1d(
-            ctx0, current, block.conv_2_w, block.conv_2_b, stride);
+            current = strided_conv_1d(
+                ctx0, current, block.conv_2_w, block.conv_2_b, stride);
 
-        // residual connection
-        inpL = ggml_add(ctx0, current, shortcut);
+            // residual connection
+            inpL = ggml_add(ctx0, current, shortcut);
 
-        // downsampling layers
-        inpL = ggml_elu(ctx0, inpL);
+            // downsampling layers
+            inpL = ggml_elu(ctx0, inpL);
 
-        inpL = strided_conv_1d(
-            ctx0, inpL, block.ds_conv_w, block.ds_conv_b, ratios[3]);
+            inpL = strided_conv_1d(
+                ctx0, inpL, block.ds_conv_w, block.ds_conv_b, ratios[3-layer_ix]);
+        }
 
         encoded_inp = inpL;
     }
@@ -513,7 +515,7 @@ int main(int argc, char* argv[]) {
     }
 
     // generate toy data
-    std::vector<float> raw_audio(10, 0.4);
+    std::vector<float> raw_audio(1000, 0.4);
 
     // encode
     const int64_t t_compr_us_start = ggml_time_us();

@@ -15,13 +15,13 @@ int main() {
 
     int n_channels = 4;
     int n_out_channels = 5;
-    int seq_length = 8;
-    int kernel_size = 3;
+    int seq_length = 12;
+    int kernel_size = 4;
 
     struct ggml_tensor * inp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, seq_length, n_channels);
     struct ggml_tensor * ker = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, kernel_size, n_channels, n_out_channels);
 
-    struct ggml_tensor * ans = ggml_conv_1d_2s(ctx, ker, inp);
+    struct ggml_tensor * ans = ggml_conv_1d_8s(ctx, ker, inp);
 
     struct ggml_cgraph gf = ggml_build_forward(ans);
     gf.n_threads = 1;

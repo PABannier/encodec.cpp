@@ -12438,7 +12438,7 @@ static void ggml_compute_forward_conv_1d_4s_f32(
 
     const int ew0 = ggml_up32(ne01);
 
-    GGML_ASSERT(ne00 % 2 == 1); // TODO: support even kernel sizes
+    // GGML_ASSERT(ne00 % 2 == 1); // TODO: support even kernel sizes
     GGML_ASSERT(nb00 == sizeof(float));
     GGML_ASSERT(nb10 == sizeof(float));
 
@@ -12495,7 +12495,7 @@ static void ggml_compute_forward_conv_1d_4s_f32(
         float * dst_data = (float *)((char *) dst->data + i1*nb1);
         for (int64_t i0 = 0; i0 < ne10; i0 += 4) {
             dst_data[i0/4] = 0;
-            for (int k = 0; k <= nk; k++) {
+            for (int k = 0; k < nk; k++) {
                 float v = 0.0f;
                 ggml_vec_dot_f32(ew0, &v,
                         (float *) params->wdata +   i1*ew0*ne00 +      (k)*ew0,
@@ -12560,7 +12560,7 @@ static void ggml_compute_forward_conv_1d_5s_f32(
 
     const int ew0 = ggml_up32(ne01);
 
-    GGML_ASSERT(ne00 % 2 == 1); // TODO: support even kernel sizes
+    // GGML_ASSERT(ne00 % 2 == 1); // TODO: support even kernel sizes
     GGML_ASSERT(nb00 == sizeof(float));
     GGML_ASSERT(nb10 == sizeof(float));
 
@@ -12617,7 +12617,7 @@ static void ggml_compute_forward_conv_1d_5s_f32(
         float * dst_data = (float *)((char *) dst->data + i1*nb1);
         for (int64_t i0 = 0; i0 < ne10; i0 += 5) {
             dst_data[i0/5] = 0;
-            for (int k = 0; k <= nk; k++) {
+            for (int k = 0; k < nk; k++) {
                 float v = 0.0f;
                 ggml_vec_dot_f32(ew0, &v,
                         (float *) params->wdata +   i1*ew0*ne00 +      (k)*ew0,
@@ -12682,7 +12682,7 @@ static void ggml_compute_forward_conv_1d_8s_f32(
 
     const int ew0 = ggml_up32(ne01);
 
-    GGML_ASSERT(ne00 % 2 == 1); // TODO: support even kernel sizes
+    // GGML_ASSERT(ne00 % 2 == 1); // TODO: support even kernel sizes
     GGML_ASSERT(nb00 == sizeof(float));
     GGML_ASSERT(nb10 == sizeof(float));
 
@@ -12739,7 +12739,7 @@ static void ggml_compute_forward_conv_1d_8s_f32(
         float * dst_data = (float *)((char *) dst->data + i1*nb1);
         for (int64_t i0 = 0; i0 < ne10; i0 += 8) {
             dst_data[i0/8] = 0;
-            for (int k = 0; k <= nk; k++) {
+            for (int k = 0; k < nk; k++) {
                 float v = 0.0f;
                 ggml_vec_dot_f32(ew0, &v,
                         (float *) params->wdata +   i1*ew0*ne00 +      (k)*ew0,
