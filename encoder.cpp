@@ -49,7 +49,6 @@ struct ggml_tensor * strided_conv_1d(
 
     struct ggml_tensor * padded_inp = pad_1d(ctx0, inp, padding_total, extra_padding);
 
-    // struct ggml_tensor * dst = ggml_conv_1d_1s(ctx0, conv_w, padded_inp);
     struct ggml_tensor * dst;
     switch (stride) {
         case 1:

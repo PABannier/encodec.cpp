@@ -5,7 +5,7 @@
 
 static const size_t MB = 4*1024*1024;
 
-float randf() {
+static float randf() {
     return (float)(rand()) / (float)(rand());
 }
 
@@ -14,25 +14,35 @@ int main() {
     struct ggml_context * ctx = ggml_init(params);
 
     int n_channels = 4;
+    int n_out_channels = 5;
     int seq_length = 8;
+    int kernel_size = 3;
 
     struct ggml_tensor * inp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, seq_length, n_channels);
+    struct ggml_tensor * ker = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, kernel_size, n_channels, n_out_channels);
 
-    int padding[2] = {2, 0};
-    struct ggml_tensor * ans = ggml_pad_1d_reflective(ctx, inp, padding);
+    struct ggml_tensor * ans = ggml_conv_1d_2s(ctx, ker, inp);
 
     struct ggml_cgraph gf = ggml_build_forward(ans);
     gf.n_threads = 1;
 
-    std::vector<float> raw_data(ggml_nelements(inp));
+    std::vector<float> raw_data(ggml_nelements(ker));
     for (size_t i = 0; i < n_channels; i++) {
-        // float v = randf();
-        for (size_t j = 0; j < seq_length; j++) {
-            // raw_data[seq_length*i + j] = v;
-            raw_data[seq_length*i + j] = randf();
+        for (size_t j = 0; j < kernel_size; j++) {
+            for (size_t k = 0; k < n_out_channels; k++) {
+                raw_data[n_out_channels*kernel_size*i + n_out_channels*j + k] = randf();
+            }
         }
     }
-    memcpy(inp->data, raw_data.data(), raw_data.size()*ggml_element_size(inp));
+    memcpy(ker->data, raw_data.data(), raw_data.size()*ggml_element_size(ker));
+
+    std::vector<float>raw_inp_data(ggml_nelements(inp));
+    for (size_t i = 0; i < n_channels; i++) {
+        for (size_t j = 0; j < seq_length; j++) {
+            raw_inp_data[seq_length*i + j] = 0.4f;
+        }
+    }
+    memcpy(inp->data, raw_inp_data.data(), raw_inp_data.size()*ggml_element_size(inp));
 
     ggml_graph_compute(ctx, &gf);
 
@@ -60,6 +70,56 @@ int main() {
     return 0;
 }
 
+// int main() {
+//     struct ggml_init_params params = { 4*MB, NULL, false };
+//     struct ggml_context * ctx = ggml_init(params);
+
+//     int n_channels = 4;
+//     int seq_length = 8;
+
+//     struct ggml_tensor * inp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, seq_length, n_channels);
+
+//     int padding[2] = {2, 0};
+//     struct ggml_tensor * ans = ggml_pad_1d_reflective(ctx, inp, padding);
+
+//     struct ggml_cgraph gf = ggml_build_forward(ans);
+//     gf.n_threads = 1;
+
+//     std::vector<float> raw_data(ggml_nelements(inp));
+//     for (size_t i = 0; i < n_channels; i++) {
+//         // float v = randf();
+//         for (size_t j = 0; j < seq_length; j++) {
+//             // raw_data[seq_length*i + j] = v;
+//             raw_data[seq_length*i + j] = randf();
+//         }
+//     }
+//     memcpy(inp->data, raw_data.data(), raw_data.size()*ggml_element_size(inp));
+
+//     ggml_graph_compute(ctx, &gf);
+
+//     printf("inp=\n");
+//     for(int i = 0; i < inp->ne[1]; i++) {
+//         for (int j = 0; j < inp->ne[0]; j++) {
+//             float val =  *(float *) ((char *) inp->data + j*inp->nb[0] + i*inp->nb[1]);
+//             printf("%.4f ", val);
+//         }
+//         printf("\n");
+//     }
+
+//     printf("\n");
+
+//     printf("ans=\n");
+//     for(int i = 0; i < ans->ne[1]; i++) {
+//         for (int j = 0; j < ans->ne[0]; j++) {
+//             float val =  *(float *) ((char *) ans->data + j*ans->nb[0] + i*ans->nb[1]);
+//             printf("%.4f ", val);
+//         }
+//         printf("\n");
+//     }
+
+//     printf("\n");
+//     return 0;
+// }
 
 // int main() {
 //      struct ggml_init_params params = { 4*MB, NULL, false };

@@ -320,6 +320,9 @@ extern "C" {
         GGML_OP_CLAMP,
         GGML_OP_CONV_1D_1S,
         GGML_OP_CONV_1D_2S,
+        GGML_OP_CONV_1D_4S,
+        GGML_OP_CONV_1D_5S,
+        GGML_OP_CONV_1D_8S,
 
         GGML_OP_PAD_1D_CONST,
         GGML_OP_PAD_1D_REFLEC,
@@ -947,6 +950,21 @@ extern "C" {
             struct ggml_tensor  * b);
 
     GGML_API struct ggml_tensor * ggml_conv_1d_2s(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b);
+
+    GGML_API struct ggml_tensor * ggml_conv_1d_4s(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b);
+
+    GGML_API struct ggml_tensor * ggml_conv_1d_5s(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b);
+
+    GGML_API struct ggml_tensor * ggml_conv_1d_8s(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
             struct ggml_tensor  * b);
