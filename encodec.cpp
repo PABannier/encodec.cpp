@@ -10,61 +10,6 @@
 #include <string>
 #include <vector>
 
-
-// struct ggml_tensor * stupid_test(
-//                     struct ggml_context * ctx0,
-//                     struct ggml_tensor * current,
-//                     struct ggml_tensor * conv_w,
-//                     struct ggml_tensor * conv_b,
-//                     int stride) {
-//     int kernel_size_ = conv_w->ne[0];
-//     int padding_total = kernel_size_ - stride;
-
-//     int extra_padding = get_extra_padding_for_conv_1d(current, kernel_size_, stride, padding_total);
-
-//     struct ggml_tensor * padded_inp = pad_1d(ctx0, current, padding_total, extra_padding);
-
-//     current = ggml_conv_1d_1s(ctx0, conv_w, padded_inp);
-//     current = ggml_transpose(ctx0, current);
-//     current = ggml_add(ctx0, ggml_repeat(ctx0, conv_b, current), current);
-//     current = ggml_cont(ctx0, ggml_transpose(ctx0, current));
-//     return current;
-// }
-
-// static int get_extra_padding_for_conv_1d(ggml_tensor * inp, float kernel_size, float stride, float padding_total) {
-//     float length = inp->ne[0];
-//     float n_frames = (length - kernel_size + padding_total) / stride + 1.0f;
-//     int ideal_length = (std::ceilf(n_frames) - 1) * stride + (kernel_size - padding_total);
-//     return ideal_length - length;
-// }
-
-// static struct ggml_tensor * pad_1d(ggml_context * ctx0, ggml_tensor * inp, int padding_left, int padding_right) {
-//     int length = inp->ne[0];
-//     int dim = inp->ne[1];
-//     ENCODEC_ASSERT(padding_left  >= 0);
-//     ENCODEC_ASSERT(padding_right >= 0);
-
-//     const int max_pad = std::max(padding_left, padding_right);
-//     int extra_pad = 0;
-
-//     if (length <= max_pad) {
-//         extra_pad = max_pad - length + 1;
-//         int padding[2] = {0, extra_pad};
-//         inp = ggml_pad_1d_constant(ctx0, inp, padding, 0);
-//     }
-
-//     int padding[2] = {padding_left, padding_right};
-//     struct ggml_tensor * padded = ggml_pad_1d_reflective(ctx0, inp, padding);
-
-//     const int end = padded->ne[0] - extra_pad;
-
-//     // struct ggml_tensor *dest = ggml_view_2d(ctx0, padded, end, dim, inp->nb[1], 0);
-//     struct ggml_tensor *dest = ggml_view_2d(ctx0, padded, end, dim, padded->nb[1], 0);
-
-//     return dest;
-// }
-
-
 bool encodec_model_load(const std::string& fname, encodec_model& model) {
     fprintf(stderr, "%s: loading model from '%s'\n", __func__, fname.c_str());
 
@@ -459,9 +404,26 @@ static void encodec_model_eval(
 
             inpL = strided_conv_1d(
                 ctx0, inpL, block.ds_conv_w, block.ds_conv_b, ratios[3-layer_ix]);
+
+            encoded_inp = inpL;
         }
 
-        encoded_inp = inpL;
+        // lstm
+        {
+            const encodec_lstm lstm = model.encoder.lstm;
+            const int hidden_dim = lstm.l0_ih_w->ne[1]/4;
+
+            struct ggml_tensor * b_hi = ggml_view_1d(ctx0, lstm.l0_hh_b, hidden_dim, 0*sizeof(float)*hidden_dim);
+            struct ggml_tensor * b_hf = ggml_view_1d(ctx0, lstm.l0_hh_b, hidden_dim, 1*sizeof(float)*hidden_dim);
+            struct ggml_tensor * b_hg = ggml_view_1d(ctx0, lstm.l0_hh_b, hidden_dim, 2*sizeof(float)*hidden_dim);
+            struct ggml_tensor * b_ho = ggml_view_1d(ctx0, lstm.l0_hh_b, hidden_dim, 3*sizeof(float)*hidden_dim);
+
+            struct ggml_tensor * w_hi = ggml_view_2d(ctx0, lstm.l0_hh_w, hidden_dim, hidden_dim, lstm.l0_hh_w->nb[1], 0*sizeof(float)*hidden_dim);
+            struct ggml_tensor * w_hf = ggml_view_2d(ctx0, lstm.l0_hh_w, hidden_dim, hidden_dim, lstm.l0_hh_w->nb[1], 1*sizeof(float)*hidden_dim);
+            struct ggml_tensor * w_hg = ggml_view_2d(ctx0, lstm.l0_hh_w, hidden_dim, hidden_dim, lstm.l0_hh_w->nb[1], 2*sizeof(float)*hidden_dim);
+            struct ggml_tensor * w_ho = ggml_view_2d(ctx0, lstm.l0_hh_w, hidden_dim, hidden_dim, lstm.l0_hh_w->nb[1], 3*sizeof(float)*hidden_dim);
+
+        }
     }
 
     ggml_build_forward_expand(&gf, encoded_inp);

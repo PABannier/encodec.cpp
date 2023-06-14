@@ -293,6 +293,8 @@ extern "C" {
         GGML_OP_SILU,
         GGML_OP_SILU_BACK,
         GGML_OP_ELU,
+        GGML_OP_SIGMOID,
+        GGML_OP_TANH,
         GGML_OP_NORM, // normalize
         GGML_OP_RMS_NORM,
         GGML_OP_RMS_NORM_BACK,
@@ -634,6 +636,14 @@ extern "C" {
     GGML_API struct ggml_tensor * ggml_relu(
             struct ggml_context * ctx,
             struct ggml_tensor  * a);
+
+    GGML_API struct ggml_tensor * ggml_sigmoid(
+            struct ggml_context * ctx,
+             struct ggml_tensor * a);
+
+    GGML_API struct ggml_tensor * ggml_tanh(
+            struct ggml_context * ctx,
+             struct ggml_tensor * a);
 
     // TODO: double-check this computation is correct
     GGML_API struct ggml_tensor * ggml_gelu(
@@ -983,7 +993,7 @@ extern "C" {
             struct ggml_tensor  * b1,
             struct ggml_tensor  * c0,
             struct ggml_tensor  * c1);
-    
+
     // Padding operations
     GGML_API struct ggml_tensor * ggml_pad_1d_constant(
             struct ggml_context * ctx,
