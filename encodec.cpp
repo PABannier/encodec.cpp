@@ -419,8 +419,23 @@ static void encodec_model_eval(
 
             inpL = ggml_add(ctx0, inpL, out);
 
-            encoded_inp = inpL;
+            // encoded_inp = inpL;
         }
+
+        // final conv
+        {
+            inpL = ggml_elu(ctx0, inpL);
+
+            struct ggml_tensor * out = strided_conv_1d(
+                ctx0, inpL, model.encoder.final_conv_w, model.encoder.final_conv_b, stride);
+
+            encoded_inp = out;
+        }
+    }
+
+    // quantizer
+    {
+
     }
 
     ggml_build_forward_expand(&gf, encoded_inp);
