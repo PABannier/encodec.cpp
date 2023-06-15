@@ -405,42 +405,37 @@ static void encodec_model_eval(
             inpL = strided_conv_1d(
                 ctx0, inpL, block.ds_conv_w, block.ds_conv_b, ratios[3-layer_ix]);
 
-            encoded_inp = inpL;
+            // encoded_inp = inpL;
         }
 
         // lstm
         {
+            struct ggml_tensor * cur = inpL;
+
             const encodec_lstm lstm = model.encoder.lstm;
-            const int hidden_dim = lstm.l0_ih_w->ne[1]/4;
 
-            struct ggml_tensor * b_hi = ggml_view_1d(ctx0, lstm.l0_hh_b, hidden_dim, 0*sizeof(float)*hidden_dim);
-            struct ggml_tensor * b_hf = ggml_view_1d(ctx0, lstm.l0_hh_b, hidden_dim, 1*sizeof(float)*hidden_dim);
-            struct ggml_tensor * b_hg = ggml_view_1d(ctx0, lstm.l0_hh_b, hidden_dim, 2*sizeof(float)*hidden_dim);
-            struct ggml_tensor * b_ho = ggml_view_1d(ctx0, lstm.l0_hh_b, hidden_dim, 3*sizeof(float)*hidden_dim);
+            struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
+            struct ggml_tensor * out = forward_pass_lstm_unilayer(ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
 
-            struct ggml_tensor * w_hi = ggml_view_2d(ctx0, lstm.l0_hh_w, hidden_dim, hidden_dim, lstm.l0_hh_w->nb[1], 0*sizeof(float)*hidden_dim);
-            struct ggml_tensor * w_hf = ggml_view_2d(ctx0, lstm.l0_hh_w, hidden_dim, hidden_dim, lstm.l0_hh_w->nb[1], 1*sizeof(float)*hidden_dim);
-            struct ggml_tensor * w_hg = ggml_view_2d(ctx0, lstm.l0_hh_w, hidden_dim, hidden_dim, lstm.l0_hh_w->nb[1], 2*sizeof(float)*hidden_dim);
-            struct ggml_tensor * w_ho = ggml_view_2d(ctx0, lstm.l0_hh_w, hidden_dim, hidden_dim, lstm.l0_hh_w->nb[1], 3*sizeof(float)*hidden_dim);
+            inpL = ggml_add(ctx0, inpL, out);
 
+            encoded_inp = inpL;
         }
     }
 
     ggml_build_forward_expand(&gf, encoded_inp);
     ggml_graph_compute       (ctx0, &gf);
 
-    printf("seq_length=%d\n", encoded_inp->ne[0]);
-    printf("n_channels=%d\n", encoded_inp->ne[1]);
-    printf("out_channels=%d\n", encoded_inp->ne[2]);
+    printf("\n");
+    printf("seq_length   = %d\n", encoded_inp->ne[0]);
+    printf("n_channels   = %d\n", encoded_inp->ne[1]);
+    printf("out_channels = %d\n", encoded_inp->ne[2]);
     printf("\n");
 
-    for(int k = 0; k < encoded_inp->ne[2]; k++) {
-        for(int i = 0; i < encoded_inp->ne[1]; i++) {
-            for (int j = 0; j < encoded_inp->ne[0]; j++) {
-                float val =  *(float *) ((char *) encoded_inp->data + j*encoded_inp->nb[0] + i*encoded_inp->nb[1] + k*encoded_inp->nb[2]);
-                printf("%.4f ", val);
-            }
-            printf("\n");
+    for(int i = 0; i < encoded_inp->ne[1]; i++) {
+        for (int j = 0; j < encoded_inp->ne[0]; j++) {
+            float val =  *(float *) ((char *) encoded_inp->data + j*encoded_inp->nb[0] + i*encoded_inp->nb[1]);
+            printf("%.4f ", val);
         }
         printf("\n");
     }
