@@ -431,10 +431,8 @@ static void encodec_model_eval(
         }
     }
 
-    // quantizer
+    // quantizer (encode)
     struct ggml_tensor * codes;
-    struct ggml_tensor * out;
-
     {
         const auto & hparams = model.hparams;
         // originally, n_q = n_q or len(self.layers)
@@ -483,7 +481,39 @@ static void encodec_model_eval(
             codes = ggml_set_1d(ctx0, codes, indices, i*codes->nb[1]);
         }
 
-        out = codes;
+    }
+
+    // quantizer (decode) 
+    struct ggml_tensor * decoded_inp;
+    struct ggml_tensor * out;
+    {
+        const auto & hparams = model.hparams;
+        const int hidden_dim = hparams.hidden_dim;
+
+        const int seq_length = codes->ne[0];
+        const int n_q        = codes->ne[1];
+
+        struct ggml_tensor * quantized_out = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
+
+        for (int i = 0; i < n_q; i++) {
+            encodec_quant_block block = model.quantizer.blocks[i];
+
+            struct ggml_tensor * indices   = ggml_view_1d(ctx0, codes, seq_length, i*codes->nb[1]);
+
+            struct ggml_tensor * quantized = ggml_get_rows(ctx0, block.embed, indices);
+
+            out = quantized;
+
+            quantized_out = ggml_add(ctx0, quantized_out, quantized);
+        }
+
+        // TODO: should we transpose?
+        out = quantized_out;
+    }
+
+    // decoder
+    {
+
     }
 
     ggml_build_forward_expand(&gf, out);
@@ -495,21 +525,21 @@ static void encodec_model_eval(
     printf("out_channels = %d\n", out->ne[2]);
     printf("\n");
 
-    // for(int i = 0; i < out->ne[1]; i++) {
-    //     for (int j = 0; j < out->ne[0]; j++) {
-    //         float val =  *(float *) ((char *) out->data + j*out->nb[0] + i*out->nb[1]);
-    //         printf("%.4f ", val);
-    //     }
-    //     printf("\n");
-    // }
-
     for(int i = 0; i < out->ne[1]; i++) {
         for (int j = 0; j < out->ne[0]; j++) {
-            int32_t val =  *(int32_t *) ((char *) out->data + j*out->nb[0] + i*out->nb[1]);
-            printf("%d ", val);
+            float val =  *(float *) ((char *) out->data + j*out->nb[0] + i*out->nb[1]);
+            printf("%.4f ", val);
         }
         printf("\n");
     }
+
+    // for(int i = 0; i < out->ne[1]; i++) {
+    //     for (int j = 0; j < out->ne[0]; j++) {
+    //         int32_t val =  *(int32_t *) ((char *) out->data + j*out->nb[0] + i*out->nb[1]);
+    //         printf("%d ", val);
+    //     }
+    //     printf("\n");
+    // }
 
     ggml_free(ctx0);
 }
