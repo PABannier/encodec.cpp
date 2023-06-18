@@ -9,109 +9,28 @@ static float randf() {
     return (float)(rand()) / (float)(rand());
 }
 
-struct ggml_tensor * forward_pass_lstm_unilayer(
-    struct ggml_context * ctx0,
-    struct ggml_tensor * inp,
-    struct ggml_tensor * weight_ih,
-    struct ggml_tensor * weight_hh,
-    struct ggml_tensor * bias_ih,
-    struct ggml_tensor * bias_hh) {
-
-    const int input_dim  = inp->ne[1];
-    const int hidden_dim = weight_ih->ne[1]/4;
-    const int seq_length = inp->ne[0];
-
-    struct ggml_tensor * hs = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
-
-    struct ggml_tensor * c_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim); 
-    struct ggml_tensor * h_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim);
-
-    ggml_set_zero(h_t);
-
-    struct ggml_tensor * current = ggml_cont(ctx0, ggml_transpose(ctx0, inp));
-    
-    for (int t = 0; t < seq_length; t++) {
-        struct ggml_tensor * x_t = ggml_view_1d(ctx0, current, input_dim, t*current->nb[1]);
-
-        struct ggml_tensor * inp_gates = ggml_mul_mat(ctx0, weight_ih, x_t);
-        inp_gates = ggml_add(ctx0, inp_gates, bias_ih);
-
-        struct ggml_tensor * hid_gates = ggml_mul_mat(ctx0, weight_hh, h_t);
-        hid_gates = ggml_add(ctx0, hid_gates, bias_hh);
-
-        struct ggml_tensor * out_gates = ggml_add(ctx0, inp_gates, hid_gates);
-
-        struct ggml_tensor * i_t = ggml_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 0*sizeof(float)*hidden_dim));
-        struct ggml_tensor * f_t = ggml_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 1*sizeof(float)*hidden_dim));
-        struct ggml_tensor * g_t = ggml_tanh   (ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 2*sizeof(float)*hidden_dim));
-        struct ggml_tensor * o_t = ggml_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 3*sizeof(float)*hidden_dim));
-
-        c_t = ggml_add(ctx0, ggml_mul(ctx0, f_t, c_t), ggml_mul(ctx0, i_t, g_t));
-        h_t = ggml_mul(ctx0, o_t, ggml_tanh(ctx0, c_t));
-
-        hs = ggml_set_1d(ctx0, hs, h_t, t*hs->nb[1]);
-    }
-
-    hs = ggml_cont(ctx0, ggml_transpose(ctx0, hs));
-
-    return hs;
-
-}
-
-struct ggml_tensor * forward_pass_lstm(
-    struct ggml_context * ctx0,
-    struct ggml_tensor * inp,
-    struct ggml_tensor * weight_ih_l0,
-    struct ggml_tensor * weight_hh_l0,
-    struct ggml_tensor * bias_ih_l0,
-    struct ggml_tensor * bias_hh_l0,
-    struct ggml_tensor * weight_ih_l1,
-    struct ggml_tensor * weight_hh_l1,
-    struct ggml_tensor * bias_ih_l1,
-    struct ggml_tensor * bias_hh_l1) {
-
-    struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(ctx0, inp, weight_ih_l0, weight_hh_l0, bias_ih_l0, bias_hh_l0);
-    struct ggml_tensor * out = forward_pass_lstm_unilayer(ctx0, hs1, weight_ih_l1, weight_hh_l1, bias_ih_l1, bias_hh_l1);
-
-    return out;
-}
-
 int main() {
+
     struct ggml_init_params params = { 4*MB, NULL, false };
     struct ggml_context * ctx = ggml_init(params);
 
-    const int seq_length  = 10;
-    const int input_size  = 4;
-    const int hidden_size = 7;
+    int seq_length = 2;
+    int n_bins = 3;
 
-    struct ggml_tensor * inp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, seq_length, input_size);
-
-    struct ggml_tensor * weight_ih_l0 = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, input_size , 4*hidden_size);
-    struct ggml_tensor * weight_hh_l0 = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hidden_size, 4*hidden_size);
-    struct ggml_tensor * weight_ih_l1 = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hidden_size, 4*hidden_size);
-    struct ggml_tensor * weight_hh_l1 = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hidden_size, 4*hidden_size);
-
-    struct ggml_tensor * bias_ih_l0 = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4*hidden_size);
-    struct ggml_tensor * bias_hh_l0 = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4*hidden_size);
-    struct ggml_tensor * bias_ih_l1 = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4*hidden_size);
-    struct ggml_tensor * bias_hh_l1 = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4*hidden_size);
-
-    struct ggml_tensor * ans = forward_pass_lstm(ctx, inp, weight_ih_l0, weight_hh_l0, bias_ih_l0, bias_hh_l0, weight_ih_l1, weight_hh_l1, bias_ih_l1, bias_hh_l1);
+    struct ggml_tensor * inp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, seq_length, n_bins);
+    struct ggml_tensor * ans = ggml_argmax(ctx, inp);
 
     struct ggml_cgraph gf = ggml_build_forward(ans);
     gf.n_threads = 1;
 
-    ggml_set_f32(inp, 0.4f);
+    std::vector<float> raw_data(n_bins * seq_length);
+    for (int i = 0; i < seq_length; i++) {
+        for (int j = 0; j < n_bins; j++) {
+                raw_data[n_bins * i + j] = randf();
+        }
+    }
 
-    ggml_set_f32(weight_ih_l0, 0.2f);
-    ggml_set_f32(weight_hh_l0, -0.1f);
-    ggml_set_f32(weight_ih_l1, 0.15f);
-    ggml_set_f32(weight_hh_l1, -0.17f);
-
-    ggml_set_f32(bias_ih_l0, 0.1f);
-    ggml_set_f32(bias_hh_l0, -0.2f);
-    ggml_set_f32(bias_ih_l1, 0.09f);
-    ggml_set_f32(bias_hh_l1, -0.14f);
+    memcpy(inp->data, raw_data.data(), n_bins*seq_length*sizeof(float));
 
     ggml_graph_compute(ctx, &gf);
 
@@ -136,9 +55,190 @@ int main() {
     }
 
     printf("\n");
-    return 0;
 
+
+    return 0;
 }
+
+// static struct ggml_tensor * quantizer_encode(
+//                 ggml_context * ctx0,
+//                  ggml_tensor * inp,
+//                  ggml_tensor * embed,
+//                  const int     n_q) {
+
+//     const int seq_length = inp->ne[0];
+
+//     struct ggml_tensor * codes = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, seq_length, n_q);
+
+//     inp = ggml_cont(ctx0, ggml_transpose(ctx0, inp));
+
+//     struct ggml_tensor * residual = inp;
+
+//     // seq_length
+//     struct ggml_tensor * indices;
+
+//     for (int i = 0; i < 1; i++) {
+//         // compute distance
+//         // [seq_length, n_bins]
+//         struct ggml_tensor * dp = ggml_scale(
+//                 ctx0, ggml_mul_mat(ctx0, embed, residual), ggml_new_f32(ctx0, -2.0f));
+
+//         // [n_bins]
+//         struct ggml_tensor * sqr_embed     = ggml_sqr(ctx0, embed);
+//         struct ggml_tensor * sqr_embed_nrm = ggml_sum_rows(ctx0, sqr_embed);
+
+//         // [seq_length]
+//         struct ggml_tensor * sqr_inp     = ggml_sqr(ctx0, residual);
+//         struct ggml_tensor * sqr_inp_nrm = ggml_sum_rows(ctx0, sqr_inp);
+
+//         // [seq_length, n_bins]
+//         struct ggml_tensor * dist = ggml_sub(ctx0, ggml_repeat(ctx0, sqr_inp_nrm, dp), dp);
+//         dist = ggml_add(ctx0, ggml_repeat(ctx0, ggml_transpose(ctx0, sqr_embed_nrm), dist), dist);
+//         dist = ggml_scale(ctx0, dist, ggml_new_f32(ctx0, -1.0f));
+
+//         // take the argmax over the column dimension
+//         // [seq_length]
+//         indices = ggml_argmax(ctx0, dist);
+//         indices = ggml_transpose(ctx0, indices);
+
+//         // look up in embedding table
+//         struct ggml_tensor * quantized = ggml_get_rows(ctx0, embed, indices);
+
+//         residual = ggml_sub(ctx0, residual, quantized);
+
+//         ggml_set_1d(ctx0, codes, indices, i*seq_length*ggml_element_size(codes));
+//     }
+
+//     // return codes;
+//     return codes;
+// }
+
+// int main() {
+//     struct ggml_init_params params = { 4*MB, NULL, false };
+//     struct ggml_context * ctx = ggml_init(params);
+
+//     const int seq_length = 5;
+//     const int input_dim  = 4;
+//     const int n_bins     = 3;
+//     const int n_q        = 2;
+
+//     struct ggml_tensor * inp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, seq_length, input_dim);
+//     struct ggml_tensor * embed = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, input_dim, n_bins);
+
+//     struct ggml_tensor * ans = quantizer_encode(ctx, inp, embed, n_q);
+
+//     struct ggml_cgraph gf = ggml_build_forward(ans);
+//     gf.n_threads = 1;
+
+//     ggml_set_f32(inp, 0.4f);
+//     // ggml_set_f32(embed, -0.2f);
+
+//     for (int i = 0; i < embed->ne[1]; i++) {
+//         for (int j = 0; j < embed->ne[0]; j++) {
+//             *(float *) ((char *) embed->data + j*embed->nb[0] + i*embed->nb[1]) = randf();
+//         }
+//     }
+
+//     ggml_graph_compute(ctx, &gf);
+
+//     printf("inp=\n");
+//     for(int i = 0; i < inp->ne[1]; i++) {
+//         for (int j = 0; j < inp->ne[0]; j++) {
+//             float val =  *(float *) ((char *) inp->data + j*inp->nb[0] + i*inp->nb[1]);
+//             printf("%.4f ", val);
+//         }
+//         printf("\n");
+//     }
+
+//     printf("embed=\n");
+//     for(int i = 0; i < embed->ne[1]; i++) {
+//         for (int j = 0; j < embed->ne[0]; j++) {
+//             float val =  *(float *) ((char *) embed->data + j*embed->nb[0] + i*embed->nb[1]);
+//             printf("%.4f ", val);
+//         }
+//         printf("\n");
+//     }
+
+//     printf("\n");
+
+//     printf("ans=\n");
+//     for(int i = 0; i < ans->ne[1]; i++) {
+//         for (int j = 0; j < ans->ne[0]; j++) {
+//             float val =  *(float *) ((char *) ans->data + j*ans->nb[0] + i*ans->nb[1]);
+//             printf("%.4f ", val);
+//         }
+//         printf("\n");
+//     }
+
+//     printf("\n");
+//     return 0;
+
+// }
+
+
+// int main() {
+//     struct ggml_init_params params = { 4*MB, NULL, false };
+//     struct ggml_context * ctx = ggml_init(params);
+
+//     const int seq_length  = 10;
+//     const int input_size  = 4;
+//     const int hidden_size = 7;
+
+//     struct ggml_tensor * inp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, seq_length, input_size);
+
+//     struct ggml_tensor * weight_ih_l0 = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, input_size , 4*hidden_size);
+//     struct ggml_tensor * weight_hh_l0 = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hidden_size, 4*hidden_size);
+//     struct ggml_tensor * weight_ih_l1 = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hidden_size, 4*hidden_size);
+//     struct ggml_tensor * weight_hh_l1 = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hidden_size, 4*hidden_size);
+
+//     struct ggml_tensor * bias_ih_l0 = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4*hidden_size);
+//     struct ggml_tensor * bias_hh_l0 = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4*hidden_size);
+//     struct ggml_tensor * bias_ih_l1 = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4*hidden_size);
+//     struct ggml_tensor * bias_hh_l1 = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4*hidden_size);
+
+//     struct ggml_tensor * ans = forward_pass_lstm(ctx, inp, weight_ih_l0, weight_hh_l0, bias_ih_l0, bias_hh_l0, weight_ih_l1, weight_hh_l1, bias_ih_l1, bias_hh_l1);
+
+//     struct ggml_cgraph gf = ggml_build_forward(ans);
+//     gf.n_threads = 1;
+
+//     ggml_set_f32(inp, 0.4f);
+
+//     ggml_set_f32(weight_ih_l0, 0.2f);
+//     ggml_set_f32(weight_hh_l0, -0.1f);
+//     ggml_set_f32(weight_ih_l1, 0.15f);
+//     ggml_set_f32(weight_hh_l1, -0.17f);
+
+//     ggml_set_f32(bias_ih_l0, 0.1f);
+//     ggml_set_f32(bias_hh_l0, -0.2f);
+//     ggml_set_f32(bias_ih_l1, 0.09f);
+//     ggml_set_f32(bias_hh_l1, -0.14f);
+
+//     ggml_graph_compute(ctx, &gf);
+
+//     printf("inp=\n");
+//     for(int i = 0; i < inp->ne[1]; i++) {
+//         for (int j = 0; j < inp->ne[0]; j++) {
+//             float val =  *(float *) ((char *) inp->data + j*inp->nb[0] + i*inp->nb[1]);
+//             printf("%.4f ", val);
+//         }
+//         printf("\n");
+//     }
+
+//     printf("\n");
+
+//     printf("ans=\n");
+//     for(int i = 0; i < ans->ne[1]; i++) {
+//         for (int j = 0; j < ans->ne[0]; j++) {
+//             float val =  *(float *) ((char *) ans->data + j*ans->nb[0] + i*ans->nb[1]);
+//             printf("%.4f ", val);
+//         }
+//         printf("\n");
+//     }
+
+//     printf("\n");
+//     return 0;
+
+// }
 
 // int main() {
 //     struct ggml_init_params params = { 4*MB, NULL, false };
