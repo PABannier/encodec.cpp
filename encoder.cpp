@@ -65,26 +65,7 @@ struct ggml_tensor * strided_conv_1d(
 
     struct ggml_tensor * padded_inp = pad_1d(ctx0, inp, padding_total, extra_padding);
 
-    struct ggml_tensor * dst;
-    switch (stride) {
-        case 1:
-            dst = ggml_conv_1d_1s(ctx0, conv_w, padded_inp);
-            break;
-        case 2:
-            dst = ggml_conv_1d_2s(ctx0, conv_w, padded_inp);
-            break;
-        case 4:
-            dst = ggml_conv_1d_4s(ctx0, conv_w, padded_inp);
-            break;
-        case 5:
-            dst = ggml_conv_1d_5s(ctx0, conv_w, padded_inp);
-            break;
-        case 8:
-            dst = ggml_conv_1d_8s(ctx0, conv_w, padded_inp);
-            break;
-        default:
-            throw std::runtime_error("Unsupported stride.");
-    }
+    struct ggml_tensor * dst = ggml_conv_1d(ctx0, conv_w, padded_inp, stride);
 
     // add bias
     dst = ggml_transpose(ctx0, dst);
