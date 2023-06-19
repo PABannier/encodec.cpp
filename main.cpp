@@ -10,27 +10,27 @@ static float randf() {
 }
 
 int main() {
-
     struct ggml_init_params params = { 4*MB, NULL, false };
     struct ggml_context * ctx = ggml_init(params);
 
-    int seq_length = 2;
-    int n_bins = 3;
+    int n_channels     = 2;
+    int n_out_channels = 2;
+    int seq_length     = 3;
+    int kernel_size    = 2;
 
-    struct ggml_tensor * inp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, seq_length, n_bins);
-    struct ggml_tensor * ans = ggml_argmax(ctx, inp);
+    struct ggml_tensor * inp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, seq_length, n_channels);
+    struct ggml_tensor * ker = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, kernel_size, n_out_channels, n_channels);
+
+    struct ggml_tensor * ans = ggml_transpose_conv_1d(ctx, ker, inp, 1);
 
     struct ggml_cgraph gf = ggml_build_forward(ans);
     gf.n_threads = 1;
 
-    std::vector<float> raw_data(n_bins * seq_length);
-    for (int i = 0; i < seq_length; i++) {
-        for (int j = 0; j < n_bins; j++) {
-                raw_data[n_bins * i + j] = randf();
-        }
-    }
+    std::vector<float> raw_data = {1, 2, 3, 4, 5, 6, 7, 8};
+    memcpy(ker->data, raw_data.data(), raw_data.size()*ggml_element_size(ker));
 
-    memcpy(inp->data, raw_data.data(), n_bins*seq_length*sizeof(float));
+    std::vector<float>raw_inp_data = {0, 2, -1, 1, 3, -2};
+    memcpy(inp->data, raw_inp_data.data(), raw_inp_data.size()*ggml_element_size(inp));
 
     ggml_graph_compute(ctx, &gf);
 
@@ -41,6 +41,19 @@ int main() {
             printf("%.4f ", val);
         }
         printf("\n");
+    }
+
+    printf("\n");
+    
+    printf("ker=\n");
+    for(int i = 0; i < ker->ne[2]; i++) {
+        for(int j = 0; j < ker->ne[1]; j++) {
+            for (int k = 0; k < ker->ne[0]; k++) {
+                float val =  *(float *) ((char *) ker->data + k*ker->nb[0] + j*ker->nb[1] + i*ker->nb[2]);
+                printf("%.4f ", val);
+            }
+            printf("\n");
+        }
     }
 
     printf("\n");
@@ -55,10 +68,59 @@ int main() {
     }
 
     printf("\n");
-
-
     return 0;
 }
+
+// int main() {
+
+//     struct ggml_init_params params = { 4*MB, NULL, false };
+//     struct ggml_context * ctx = ggml_init(params);
+
+//     int seq_length = 2;
+//     int n_bins = 3;
+
+//     struct ggml_tensor * inp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, seq_length, n_bins);
+//     struct ggml_tensor * ans = ggml_argmax(ctx, inp);
+
+//     struct ggml_cgraph gf = ggml_build_forward(ans);
+//     gf.n_threads = 1;
+
+//     std::vector<float> raw_data(n_bins * seq_length);
+//     for (int i = 0; i < seq_length; i++) {
+//         for (int j = 0; j < n_bins; j++) {
+//                 raw_data[n_bins * i + j] = randf();
+//         }
+//     }
+
+//     memcpy(inp->data, raw_data.data(), n_bins*seq_length*sizeof(float));
+
+//     ggml_graph_compute(ctx, &gf);
+
+//     printf("inp=\n");
+//     for(int i = 0; i < inp->ne[1]; i++) {
+//         for (int j = 0; j < inp->ne[0]; j++) {
+//             float val =  *(float *) ((char *) inp->data + j*inp->nb[0] + i*inp->nb[1]);
+//             printf("%.4f ", val);
+//         }
+//         printf("\n");
+//     }
+
+//     printf("\n");
+
+//     printf("ans=\n");
+//     for(int i = 0; i < ans->ne[1]; i++) {
+//         for (int j = 0; j < ans->ne[0]; j++) {
+//             float val =  *(float *) ((char *) ans->data + j*ans->nb[0] + i*ans->nb[1]);
+//             printf("%.4f ", val);
+//         }
+//         printf("\n");
+//     }
+
+//     printf("\n");
+
+
+//     return 0;
+// }
 
 // static struct ggml_tensor * quantizer_encode(
 //                 ggml_context * ctx0,

@@ -326,6 +326,7 @@ extern "C" {
         GGML_OP_CONV_1D_4S,
         GGML_OP_CONV_1D_5S,
         GGML_OP_CONV_1D_8S,
+        GGML_OP_TRANSPOSE_CONV_1D,
 
         GGML_OP_PAD_1D_CONST,
         GGML_OP_PAD_1D_REFLEC,
@@ -984,6 +985,12 @@ extern "C" {
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
             struct ggml_tensor  * b);
+
+    GGML_API struct ggml_tensor * ggml_transpose_conv_1d(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            int                   stride);
 
     GGML_API struct ggml_tensor * ggml_flash_attn(
             struct ggml_context * ctx,
