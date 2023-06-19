@@ -321,11 +321,7 @@ extern "C" {
         GGML_OP_ROPE_BACK,
         GGML_OP_ALIBI,
         GGML_OP_CLAMP,
-        GGML_OP_CONV_1D_1S,
-        GGML_OP_CONV_1D_2S,
-        GGML_OP_CONV_1D_4S,
-        GGML_OP_CONV_1D_5S,
-        GGML_OP_CONV_1D_8S,
+        GGML_OP_CONV_1D,
         GGML_OP_TRANSPOSE_CONV_1D,
 
         GGML_OP_PAD_1D_CONST,
@@ -957,34 +953,11 @@ extern "C" {
             float                 min,
             float                 max);
 
-    // padding = 1
-    // TODO: we don't support extra parameters for now
-    //       that's why we are hard-coding the stride, padding, and dilation
-    //       not great ..
-    GGML_API struct ggml_tensor * ggml_conv_1d_1s(
+    GGML_API struct ggml_tensor * ggml_conv_1d(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
-            struct ggml_tensor  * b);
-
-    GGML_API struct ggml_tensor * ggml_conv_1d_2s(
-            struct ggml_context * ctx,
-            struct ggml_tensor  * a,
-            struct ggml_tensor  * b);
-
-    GGML_API struct ggml_tensor * ggml_conv_1d_4s(
-            struct ggml_context * ctx,
-            struct ggml_tensor  * a,
-            struct ggml_tensor  * b);
-
-    GGML_API struct ggml_tensor * ggml_conv_1d_5s(
-            struct ggml_context * ctx,
-            struct ggml_tensor  * a,
-            struct ggml_tensor  * b);
-
-    GGML_API struct ggml_tensor * ggml_conv_1d_8s(
-            struct ggml_context * ctx,
-            struct ggml_tensor  * a,
-            struct ggml_tensor  * b);
+            struct ggml_tensor  * b,
+            int                   stride);
 
     GGML_API struct ggml_tensor * ggml_transpose_conv_1d(
             struct ggml_context * ctx,
