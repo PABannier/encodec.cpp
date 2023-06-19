@@ -13192,6 +13192,8 @@ static void ggml_compute_forward_transpose_conv_1d_f32(
         return;
     }
 
+    size_t stride = ((int32_t *) opt0->data)[0];
+
     // total rows in dst
     const int nr = ne01;
 
@@ -13210,7 +13212,7 @@ static void ggml_compute_forward_transpose_conv_1d_f32(
                 ggml_vec_dot_f32(ew0, &v,
                         (float *) params->wdata +   i1*ew0*ne00 +  k*ew0,
                         (float *) params->wdata + ne02*ew0*ne00 + i0*ew0);
-                dst_data[i0 + k] += v;
+                dst_data[i0*stride + k] += v;
             }
         }
     }

@@ -36,13 +36,29 @@ static struct ggml_tensor * pad_1d(ggml_context * ctx0, ggml_tensor * inp, int p
     return dest;
 }
 
+static struct ggml_tensor * unpad_1d(ggml_context * ctx0, ggml_tensor * inp, int padding_left, int padding_right) {
+    int length = inp->ne[0];
+    int dim    = inp->ne[1];
+
+    ENCODEC_ASSERT(padding_left  >= 0);
+    ENCODEC_ASSERT(padding_right >= 0);
+    ENCODEC_ASSERT(padding_left + padding_right <= length);
+
+    int end = length - padding_right;
+
+    int offset = padding_left * inp->nb[1];
+    struct ggml_tensor * dst = ggml_view_2d(ctx0, inp, end, dim, inp->nb[1], offset);
+
+    return dst;
+}
+
 struct ggml_tensor * strided_conv_1d(
             ggml_context * ctx0,
              ggml_tensor * inp,
              ggml_tensor * conv_w,
              ggml_tensor * conv_b,
                      int   stride) {
-    int kernel_size = conv_w->ne[0];
+    int kernel_size   = conv_w->ne[0];
     int padding_total = kernel_size - stride;
 
     int extra_padding = get_extra_padding_for_conv_1d(inp, kernel_size, stride, padding_total);
@@ -124,4 +140,29 @@ struct ggml_tensor * forward_pass_lstm_unilayer(
     hs = ggml_cont(ctx0, ggml_transpose(ctx0, hs));
 
     return hs;
+}
+
+struct ggml_tensor * strided_conv_transpose_1d(
+            ggml_context * ctx0,
+             ggml_tensor * inp,
+             ggml_tensor * conv_w,
+             ggml_tensor * conv_b,
+                     int   stride) {
+    int kernel_size   = conv_w->ne[0];
+    int padding_total = kernel_size - stride;
+
+    struct ggml_tensor * dst = ggml_transpose_conv_1d(ctx0, conv_w, inp, stride);
+
+    // add bias
+    dst = ggml_transpose(ctx0, dst);
+    dst = ggml_add(ctx0, ggml_repeat(ctx0, conv_b, dst), dst);
+    dst = ggml_cont(ctx0, ggml_transpose(ctx0, dst));
+
+    int padding_right = std::ceilf(padding_total);
+    int padding_left = padding_total - padding_right;
+
+    struct ggml_tensor * unpadded = unpad_1d(ctx0, dst, padding_left, padding_right);
+    unpadded = ggml_cont(ctx0, unpadded);
+
+    return unpadded;
 }

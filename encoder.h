@@ -16,3 +16,10 @@ struct ggml_tensor * forward_pass_lstm_unilayer(
        ggml_tensor * weight_hh,
        ggml_tensor * bias_ih,
        ggml_tensor * bias_hh);
+
+struct ggml_tensor * strided_conv_transpose_1d(
+      ggml_context * ctx0,
+       ggml_tensor * inp,
+       ggml_tensor * conv_w,
+       ggml_tensor * conv_b,
+               int   stride);

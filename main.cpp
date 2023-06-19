@@ -21,7 +21,7 @@ int main() {
     struct ggml_tensor * inp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, seq_length, n_channels);
     struct ggml_tensor * ker = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, kernel_size, n_out_channels, n_channels);
 
-    struct ggml_tensor * ans = ggml_transpose_conv_1d(ctx, ker, inp, 1);
+    struct ggml_tensor * ans = ggml_transpose_conv_1d(ctx, ker, inp, 5);
 
     struct ggml_cgraph gf = ggml_build_forward(ans);
     gf.n_threads = 1;

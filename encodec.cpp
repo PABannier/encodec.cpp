@@ -523,7 +523,7 @@ static void encodec_model_eval(
 
         // lstm
         {
-            struct ggml_tensor * cur = inpL;    
+            struct ggml_tensor * cur = inpL;
 
             const encodec_lstm lstm = model.decoder.lstm;
 
@@ -536,9 +536,48 @@ static void encodec_model_eval(
                 ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
 
             inpL = ggml_add(ctx0, inpL, out);
-        }    
+        }
 
-        out = inpL;
+        for (int layer_ix = 0; layer_ix < 4; layer_ix++) {
+            encodec_decoder_block block = model.decoder.blocks[layer_ix];
+
+            // upsampling layers
+            inpL = ggml_elu(ctx0, inpL);
+
+            inpL = strided_conv_transpose_1d(
+                ctx0, inpL, block.us_conv_w, block.us_conv_b, ratios[layer_ix]);
+
+            struct ggml_tensor * current = inpL;
+            
+            // shortcut
+            struct ggml_tensor * shortcut = strided_conv_1d(
+                ctx0, inpL, block.conv_sc_w, block.conv_sc_b, stride);
+            
+            // conv1
+            current = ggml_elu(ctx0, current);
+
+            current = strided_conv_1d(
+                ctx0, current, block.conv_1_w, block.conv_1_b, stride);
+
+            // conv2
+            current = ggml_elu(ctx0, current);
+
+            current = strided_conv_1d(
+                ctx0, current, block.conv_2_w, block.conv_2_b, stride);
+
+            // residual connection
+            inpL = ggml_add(ctx0, current, shortcut);
+        }
+
+        // final conv
+        {
+            inpL = ggml_elu(ctx0, inpL);
+
+            decoded_inp = strided_conv_1d(
+                ctx0, inpL, model.decoder.final_conv_w, model.decoder.final_conv_b, stride);
+        }
+
+        out = decoded_inp;
     }
 
     ggml_build_forward_expand(&gf, out);
@@ -549,6 +588,8 @@ static void encodec_model_eval(
     printf("n_channels   = %d\n", out->ne[1]);
     printf("out_channels = %d\n", out->ne[2]);
     printf("\n");
+
+    out = ggml_view_2d(ctx0, out, 1000, out->ne[1], out->nb[1], 0);
 
     for(int i = 0; i < out->ne[1]; i++) {
         for (int j = 0; j < out->ne[0]; j++) {
