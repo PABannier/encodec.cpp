@@ -12416,13 +12416,13 @@ static void ggml_compute_forward_transpose_conv_1d_f32(
     const int nb10 = src1->nb[0];
     const int nb11 = src1->nb[1];
 
-    const int nb0  = dst->nb[0];
+    // const int nb0  = dst->nb[0];
     const int nb1  = dst->nb[1];
 
     const int ith = params->ith;
     const int nth = params->nth;
 
-    const int nk = ne00;
+    // const int nk = ne00;
 
     const int ew0 = ggml_up32(ne02);
 
