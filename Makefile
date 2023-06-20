@@ -29,8 +29,8 @@ endif
 #
 
 # keep standard at C11 and C++11
-CFLAGS   = -I.               -std=c11   -fPIC -g
-CXXFLAGS = -I. -std=c++11 -fPIC -g
+CFLAGS   = -I. -O3 -std=c11   -fPIC
+CXXFLAGS = -I. -O3 -std=c++11 -fPIC
 LDFLAGS  =
 
 # warnings
@@ -152,7 +152,7 @@ all: main
 encodec: encodec.o encoder.o ggml.o
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
 
-main: main.cpp ggml.o
+main: main.cpp ggml.o encodec.o encoder.o
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
 
 clean:
