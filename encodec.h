@@ -7,7 +7,7 @@
 #include <iostream>
 #include <map>
 #include <thread>
-#include <string> 
+#include <string>
 #include <vector>
 
 struct encodec_hparams {
@@ -43,14 +43,14 @@ struct encodec_encoder_block {
     struct ggml_tensor * conv_sc_b;
 
     // downsampling layers
-    struct ggml_tensor * ds_conv_w;  
+    struct ggml_tensor * ds_conv_w;
     struct ggml_tensor * ds_conv_b;
 };
 
 struct encodec_lstm {
     struct ggml_tensor * l0_ih_w;
     struct ggml_tensor * l0_hh_w;
-    
+
     struct ggml_tensor * l0_ih_b;
     struct ggml_tensor * l0_hh_b;
 
@@ -127,3 +127,22 @@ struct encodec_model {
 
     std::map<std::string, struct ggml_tensor *> tensors;
 };
+
+struct encodec_params {
+    int32_t n_threads = std::min(4, (int32_t) std::thread::hardware_concurrency());
+
+    uint8_t verbosity = 0;  // verbosity level
+
+    std::string model = "./ggml_weights/ggml-model.bin"; // model path
+
+    // input audio file
+    std::string in_audio_path;
+};
+
+bool encodec_model_load(const std::string& fname, encodec_model& model);
+
+void encodec_model_eval(std::vector<float>& raw_audio, encodec_model& model, int n_threads);
+
+bool encodec_params_parse(int argc, char ** argv, encodec_params & params);
+
+void encodec_print_usage(char ** argv, const encodec_params & params);

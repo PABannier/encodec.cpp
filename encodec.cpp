@@ -346,7 +346,7 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
     return true;
 }
 
-static void encodec_model_eval(
+void encodec_model_eval(
         std::vector<float>& raw_audio,
         encodec_model& model,
         int n_threads) {
@@ -368,8 +368,6 @@ static void encodec_model_eval(
         const auto & hparams = model.hparams;
 
         const int * ratios      = hparams.ratios;
-        const int kernel_size   = hparams.kernel_size;
-        const int res_kernel_sz = hparams.residual_kernel_size;
         const int stride        = hparams.stride;
 
         struct ggml_tensor * inpL = strided_conv_1d(
@@ -435,7 +433,6 @@ static void encodec_model_eval(
     // quantizer (encode)
     struct ggml_tensor * codes;
     {
-        const auto & hparams = model.hparams;
         // originally, n_q = n_q or len(self.layers)
         // for this model, n_q is at most 32, but the implementation we are comparing
         // our model against has only 16, hence we hardcode 16 as n_q for now.
@@ -514,8 +511,6 @@ static void encodec_model_eval(
         const auto & hparams = model.hparams;
 
         const int * ratios      = hparams.ratios;
-        const int kernel_size   = hparams.kernel_size;
-        const int res_kernel_sz = hparams.residual_kernel_size;
         const int stride        = hparams.stride;
 
         struct ggml_tensor * inpL = strided_conv_1d(
@@ -583,76 +578,46 @@ static void encodec_model_eval(
     ggml_build_forward_expand(&gf, out);
     ggml_graph_compute       (ctx0, &gf);
 
-    printf("\n");
-    printf("seq_length   = %d\n", out->ne[0]);
-    printf("n_channels   = %d\n", out->ne[1]);
-    printf("out_channels = %d\n", out->ne[2]);
-    printf("\n");
-
-    out = ggml_view_2d(ctx0, out, 1000, out->ne[1], out->nb[1], 0);
-
-    for(int i = 0; i < out->ne[1]; i++) {
-        for (int j = 0; j < out->ne[0]; j++) {
-            float val =  *(float *) ((char *) out->data + j*out->nb[0] + i*out->nb[1]);
-            printf("%.4f ", val);
-        }
-        printf("\n");
-    }
-
-    // for(int i = 0; i < out->ne[1]; i++) {
-    //     for (int j = 0; j < out->ne[0]; j++) {
-    //         int32_t val =  *(int32_t *) ((char *) out->data + j*out->nb[0] + i*out->nb[1]);
-    //         printf("%d ", val);
-    //     }
-    //     printf("\n");
-    // }
+    // TODO: write output in vector
 
     ggml_free(ctx0);
 }
 
-int main(int argc, char* argv[]) {
-    const int64_t t_main_start_us = ggml_time_us();
+bool encodec_params_parse(int argc, char ** argv, encodec_params & params) {
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
 
-    int64_t t_load_us  = 0;
-    int64_t t_compr_us = 0;
-
-    encodec_model model;
-
-    // load the model
-    {
-        const int64_t t_start_us = ggml_time_us();
-        std::string model_path = "./ggml_weights/ggml-model.bin";
-
-        if (!encodec_model_load(model_path, model)) {
-            fprintf(stderr, "%s: failed to load model from '%s'\n", __func__, model_path.c_str());
-            return 1;
+        if (arg == "-t" || arg == "--threads") {
+            params.n_threads = std::stoi(argv[++i]);
+        } else if (arg == "-v" || arg == "--verbosity") {
+            params.verbosity = std::stoi(argv[++i]);
+        } else if (arg == "-m" || arg == "--model") {
+            params.model = argv[++i];
+        } else if (arg == "-a" || arg == "--audio") {
+            params.in_audio_path = argv[++i];
+        } else if (arg == "-h" || arg == "--help") {
+            encodec_print_usage(argv, params);
+            exit(0);
+        } else {
+            fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
+            encodec_print_usage(argv, params);
+            exit(0);
         }
-
-        t_load_us = ggml_time_us() - t_start_us;
     }
 
-    // generate toy data
-    std::vector<float> raw_audio(1000, 0.4);
+    return true;
+}
 
-    // encode
-    const int64_t t_compr_us_start = ggml_time_us();
-
-    // TODO change n_threads to be passed by params
-    encodec_model_eval(raw_audio, model, 1);
-
-    t_compr_us = ggml_time_us() - t_compr_us_start;
-
-    // report timing
-    {
-        const int64_t t_main_end_us = ggml_time_us();
-
-        printf("\n\n");
-        printf("%s:     load time = %8.2f ms\n", __func__, t_load_us/1000.0f);
-        printf("%s: compress time = %8.2f ms\n", __func__, t_compr_us/1000.0f);
-        printf("%s:    total time = %8.2f ms\n", __func__, (t_main_end_us - t_main_start_us)/1000.0f);
-    }
-
-    ggml_free(model.ctx);
-
-    return 0;
+void encodec_print_usage(char ** argv, const encodec_params & params) {
+    fprintf(stderr, "usage: %s [options]\n", argv[0]);
+    fprintf(stderr, "\n");
+    fprintf(stderr, "options:\n");
+    fprintf(stderr, "  -h, --help            show this help message and exit\n");
+    fprintf(stderr, "  -t N, --threads N     number of threads to use during computation (default: %d)\n", params.n_threads);
+    fprintf(stderr, "  -v V, --verbosity V   verbosity level (default: %d)\n", params.verbosity);
+    fprintf(stderr, "  -m FNAME, --model FNAME\n");
+    fprintf(stderr, "                        model path (default: %s)\n", params.model.c_str());
+    fprintf(stderr, "  -a FNAME, --audio FNAME\n");
+    fprintf(stderr, "                        audio file path \n");
+    fprintf(stderr, "\n");
 }
