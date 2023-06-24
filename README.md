@@ -12,6 +12,9 @@ Utils operations: encoder.h / encoder.cpp
 
 ## Roadmap
 
+- [x] Support of 24Khz model
+- [ ] Support of 48Khz model
+- [ ] Encodec's language model support
 - [ ] Mixed F16 / F32 precision
 - [ ] 4-bit / 8-bit quantization support
 - [ ] Add Encodec's original language model
