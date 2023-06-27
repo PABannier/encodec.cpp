@@ -141,7 +141,7 @@ struct encodec_params {
 
 bool encodec_model_load(const std::string& fname, encodec_model& model);
 
-void encodec_model_eval(std::vector<float>& raw_audio, encodec_model& model, int n_threads);
+void encodec_model_eval(std::vector<float> raw_input, encodec_model& model, int n_threads);
 
 bool encodec_params_parse(int argc, char ** argv, encodec_params & params);
 

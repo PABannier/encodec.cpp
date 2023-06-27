@@ -347,10 +347,10 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
 }
 
 void encodec_model_eval(
-        std::vector<float>& raw_audio,
+        std::vector<float> raw_input,
         encodec_model& model,
         int n_threads) {
-    static size_t buf_size = 512u*MB;
+    static size_t buf_size = 512*MB;
     static void * buf      = malloc(buf_size);
 
     struct ggml_init_params params = { buf_size, buf, false };
@@ -359,16 +359,16 @@ void encodec_model_eval(
     struct ggml_cgraph    gf   = {};
     gf.n_threads = n_threads;
 
-    struct ggml_tensor * inp = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, raw_audio.size());
-    memcpy(inp->data, raw_audio.data(), raw_audio.size()*ggml_element_size(inp));
+    struct ggml_tensor * inp = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, raw_input.size());
+    memcpy(inp->data, raw_input.data(), raw_input.size()*ggml_element_size(inp));
 
     // encoder
     struct ggml_tensor * encoded_inp;
     {
         const auto & hparams = model.hparams;
 
-        const int * ratios      = hparams.ratios;
-        const int stride        = hparams.stride;
+        const int * ratios   = hparams.ratios;
+        const int   stride   = hparams.stride;
 
         struct ggml_tensor * inpL = strided_conv_1d(
             ctx0, inp, model.encoder.init_conv_w, model.encoder.init_conv_b, stride);
@@ -543,11 +543,11 @@ void encodec_model_eval(
                 ctx0, inpL, block.us_conv_w, block.us_conv_b, ratios[layer_ix]);
 
             struct ggml_tensor * current = inpL;
-            
+
             // shortcut
             struct ggml_tensor * shortcut = strided_conv_1d(
                 ctx0, inpL, block.conv_sc_w, block.conv_sc_b, stride);
-            
+
             // conv1
             current = ggml_elu(ctx0, current);
 

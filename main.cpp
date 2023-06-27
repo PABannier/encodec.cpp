@@ -1,3 +1,4 @@
+#include "common.h"
 #include "encodec.h"
 #include "ggml.h"
 
@@ -31,14 +32,22 @@ int main(int argc, char **argv) {
         t_load_us = ggml_time_us() - t_start_us;
     }
 
-    // generate toy data
-    std::vector<float> raw_audio(1000, 0.4);
+    // load audio file
+    std::vector<float> pcmf32;               // mono-channel F32 PCM
+    std::vector<std::vector<float>> pcmf32s; // stereo-channel F32 PCM
+
+    params.in_audio_path = "./test_24k.wav";
+
+    if (!read_wav(params.in_audio_path, pcmf32, pcmf32s, false)) {
+        fprintf(stderr, "error: failed to read WAV file '%s'\n", params.in_audio_path.c_str());
+        return 1;
+    }
 
     // encode
     const int64_t t_compr_us_start = ggml_time_us();
 
     // TODO change n_threads to be passed by params
-    encodec_model_eval(raw_audio, model, 1);
+    encodec_model_eval(pcmf32, model, 1);
 
     t_compr_us = ggml_time_us() - t_compr_us_start;
 

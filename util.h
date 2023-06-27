@@ -5,6 +5,7 @@
 #define ENCODEC_FILE_MAGIC   'ggml'
 #define ENCODEC_FILE_VERSION 1
 
+
 #define ENCODEC_ASSERT(x) \
     do { \
         if (!(x)) { \
