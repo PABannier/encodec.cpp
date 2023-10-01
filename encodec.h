@@ -166,4 +166,9 @@ struct encodec_model encodec_load_model_from_file(std::string fname);
 
 struct encodec_context encodec_new_context_with_model(encodec_model & model);
 
+bool encodec_model_eval(
+                   encodec_context & ectx,
+                std::vector<float> & raw_audio,
+                               int   n_threads);
+
 void encodec_free(encodec_context & ectx);

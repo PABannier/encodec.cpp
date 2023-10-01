@@ -790,9 +790,9 @@ static struct ggml_cgraph * encodec_build_graph(
     return gf;
 }
 
-static bool encodec_model_eval(
-                std::vector<float> & raw_audio,
+bool encodec_model_eval(
                    encodec_context & ectx,
+                std::vector<float> & raw_audio,
                                int   n_threads) {
     const int64_t t_start_ms = ggml_time_ms();
 
