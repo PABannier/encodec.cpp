@@ -1,3 +1,4 @@
+#include <cassert>
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
@@ -8,10 +9,132 @@
 
 #include "encodec.h"
 #include "ggml.h"
+#include "ggml-alloc.h"
+
+
+static const size_t TENSOR_ALIGNMENT = 32;
+
+// res + downsample block at some ratio
+struct encodec_encoder_block {
+    // conv1
+    struct ggml_tensor * conv_1_w;
+    struct ggml_tensor * conv_1_b;
+
+    // conv2
+    struct ggml_tensor * conv_2_w;
+    struct ggml_tensor * conv_2_b;
+
+    // shortcut
+    struct ggml_tensor * conv_sc_w;
+    struct ggml_tensor * conv_sc_b;
+
+    // downsampling layers
+    struct ggml_tensor * ds_conv_w;
+    struct ggml_tensor * ds_conv_b;
+};
+
+struct encodec_lstm {
+    struct ggml_tensor * l0_ih_w;
+    struct ggml_tensor * l0_hh_w;
+
+    struct ggml_tensor * l0_ih_b;
+    struct ggml_tensor * l0_hh_b;
+
+    struct ggml_tensor * l1_ih_w;
+    struct ggml_tensor * l1_hh_w;
+
+    struct ggml_tensor * l1_ih_b;
+    struct ggml_tensor * l1_hh_b;
+};
+
+struct encodec_encoder {
+    struct ggml_tensor * init_conv_w;
+    struct ggml_tensor * init_conv_b;
+
+    encodec_lstm lstm;
+
+    struct ggml_tensor * final_conv_w;
+    struct ggml_tensor * final_conv_b;
+
+    std::vector<encodec_encoder_block> blocks;
+};
+
+struct encodec_quant_block {
+    struct ggml_tensor * inited;
+    struct ggml_tensor * cluster_size;
+    struct ggml_tensor * embed;
+    struct ggml_tensor * embed_avg;
+};
+
+struct encodec_quantizer {
+    std::vector<encodec_quant_block> blocks;
+};
+
+struct encodec_decoder_block {
+    //upsampling layers
+    struct ggml_tensor * us_conv_w;
+    struct ggml_tensor * us_conv_b;
+
+    // conv1
+    struct ggml_tensor * conv_1_w;
+    struct ggml_tensor * conv_1_b;
+
+    // conv2
+    struct ggml_tensor * conv_2_w;
+    struct ggml_tensor * conv_2_b;
+
+    // shortcut
+    struct ggml_tensor * conv_sc_w;
+    struct ggml_tensor * conv_sc_b;
+};
+
+struct encodec_decoder {
+    struct ggml_tensor * init_conv_w;
+    struct ggml_tensor * init_conv_b;
+
+    encodec_lstm lstm;
+
+    struct ggml_tensor * final_conv_w;
+    struct ggml_tensor * final_conv_b;
+
+    std::vector<encodec_decoder_block> blocks;
+};
+
+struct encodec_model {
+    encodec_hparams hparams;
+
+    encodec_encoder   encoder;
+    encodec_quantizer quantizer;
+    encodec_decoder   decoder;
+
+    // context
+    struct ggml_context * ctx;
+    int n_loaded;
+
+    std::map<std::string, struct ggml_tensor *> tensors;
+};
 
 template<typename T>
 static void read_safe(std::ifstream& infile, T& dest) {
     infile.read((char*)& dest, sizeof(T));
+}
+
+static void ggml_graph_compute_helper(std::vector<uint8_t> & buf, ggml_cgraph * graph, int n_threads) {
+    struct ggml_cplan plan = ggml_graph_plan(graph, n_threads);
+
+    if (plan.work_size > 0) {
+        buf.resize(plan.work_size);
+        plan.work_data = buf.data();
+    }
+
+    ggml_graph_compute(graph, &plan);
+}
+
+static void ggml_disconnect_node_from_graph(ggml_tensor * t) {
+    t->op = GGML_OP_NONE;
+    for (int i = 0; i < GGML_MAX_SRC; i++) {
+        t->src[i] = NULL;
+    }
 }
 
 static void encodec_sigmoid_impl(struct ggml_tensor * dst, const struct ggml_tensor * src, int ith, int nth, void * userdata) {
@@ -72,9 +195,9 @@ static struct ggml_tensor * unpad_1d(ggml_context * ctx0, ggml_tensor * inp, int
     int length = inp->ne[0];
     int dim    = inp->ne[1];
 
-    ENCODEC_ASSERT(padding_left  >= 0);
-    ENCODEC_ASSERT(padding_right >= 0);
-    ENCODEC_ASSERT(padding_left + padding_right <= length);
+    assert(padding_left  >= 0);
+    assert(padding_right >= 0);
+    assert(padding_left + padding_right <= length);
 
     int end = length - padding_right;
 
@@ -515,20 +638,27 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
     return true;
 }
 
-static void encodec_model_eval(
-        std::vector<float>& raw_audio,
-        encodec_model& model,
-        int n_threads) {
-    static size_t buf_size = 512u*MB;
-    static void * buf      = malloc(buf_size);
+static struct ggml_cgraph * encodec_build_graph(
+                     encodec_context & ectx,
+            const std::vector<float> & inp_audio) {
+    const int32_t audio_length = inp_audio.size();
 
-    struct ggml_init_params params = { buf_size, buf, false };
+    const auto & model = ectx.model;
 
-    struct ggml_context * ctx0 = ggml_init(params);
-    struct ggml_cgraph    gf   = {};
+    struct ggml_init_params ggml_params = {
+        /*.mem_size   =*/ ectx.buf_compute.size(),
+        /*.mem_buffer =*/ ectx.buf_compute.data(),
+        /*.no_alloc   =*/ true, // skip allocating as we use ggml_alloc to allocate exact memory requirements
+    };
 
-    struct ggml_tensor * inp = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, raw_audio.size());
-    memcpy(inp->data, raw_audio.data(), raw_audio.size()*ggml_element_size(inp));
+    struct ggml_context * ctx0 = ggml_init(ggml_params);
+    struct ggml_cgraph  * gf   = ggml_new_graph(ctx0);
+
+    struct ggml_tensor * inp = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, audio_length);
+    ggml_allocr_alloc(ectx.allocr, inp);
+    if (!ggml_allocr_is_measure(ectx.allocr)) {
+        memcpy(inp->data, inp_audio.data(), audio_length*ggml_element_size(inp));
+    }
 
     // encoder
     struct ggml_tensor * encoded_inp;
@@ -662,6 +792,7 @@ static void encodec_model_eval(
         const int n_q        = codes->ne[1];
 
         quantized_out = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
+        quantized_out = ggml_set_zero(quantized_out);
 
         for (int i = 0; i < n_q; i++) {
             encodec_quant_block block = model.quantizer.blocks[i];
@@ -716,11 +847,11 @@ static void encodec_model_eval(
                 ctx0, inpL, block.us_conv_w, block.us_conv_b, ratios[layer_ix]);
 
             struct ggml_tensor * current = inpL;
-            
+
             // shortcut
             struct ggml_tensor * shortcut = strided_conv_1d(
                 ctx0, inpL, block.conv_sc_w, block.conv_sc_b, stride);
-            
+
             // conv1
             current = ggml_elu(ctx0, current);
 
@@ -748,8 +879,75 @@ static void encodec_model_eval(
         out = decoded_inp;
     }
 
-    ggml_build_forward_expand  (&gf, out);
-    ggml_graph_compute_with_ctx(ctx0, &gf, n_threads);
+    out = ggml_cpy(ectx.ctx_audio, out, ectx.reconstructed_audio);
+
+    ggml_build_forward_expand(gf, out);
+    ggml_disconnect_node_from_graph(ectx.reconstructed_audio);
 
     ggml_free(ctx0);
+
+    return gf;
+}
+
+static bool encodec_model_eval(
+                std::vector<float> & raw_audio,
+                   encodec_context & ectx,
+                               int   n_threads) {
+    const int64_t t_start_ms = ggml_time_ms();
+
+    fprintf(stderr, "%s: raw audio (t=%zu)\n", __func__, raw_audio.size());
+
+    static const size_t buf_size = 256u*1024*1024;
+
+    if (ectx.ctx_audio) {
+        ggml_free(ectx.ctx_audio);
+        ectx.ctx_audio = {};
+    }
+
+    struct ggml_init_params ggml_params = {
+        /*.mem_size   =*/ buf_size,
+        /*.mem_buffer =*/ NULL,
+        /*.no_alloc   =*/ false,
+    };
+
+    ectx.ctx_audio = ggml_init(ggml_params);
+
+    ectx.reconstructed_audio = ggml_new_tensor_1d(ectx.ctx_audio, GGML_TYPE_F32, raw_audio.size());
+
+    // reconstruct the audio
+    ectx.buf_compute.resize(ggml_tensor_overhead()*GGML_MAX_NODES + ggml_graph_overhead());
+    ectx.allocr = ggml_allocr_new_measure(TENSOR_ALIGNMENT);
+    struct ggml_cgraph * gf_measure = encodec_build_graph(ectx, raw_audio);
+    if (!gf_measure) {
+        fprintf(stderr, "%s: failed to build graph\n", __func__);
+        return false;
+    }
+
+    size_t alloc_size = ggml_allocr_alloc_graph(ectx.allocr, gf_measure) + TENSOR_ALIGNMENT;
+    ggml_allocr_free(ectx.allocr);
+
+    // recreate allocator with exact memory requirements
+    ectx.buf_alloc.resize(alloc_size);
+    ectx.allocr = ggml_allocr_new(ectx.buf_alloc.data(), ectx.buf_alloc.size(), TENSOR_ALIGNMENT);
+
+    // compute the graph with the measured exact memory requirements from above
+    ggml_allocr_reset(ectx.allocr);
+
+    struct ggml_cgraph * gf = encodec_build_graph(ectx, raw_audio);
+    if (!gf) {
+        fprintf(stderr, "%s: failed to build graph\n", __func__);
+        return false;
+    }
+
+    ggml_allocr_alloc_graph(ectx.allocr, gf);
+
+    ggml_graph_compute_helper(ectx.work_buffer, gf, n_threads);
+
+    ggml_allocr_free(ectx.allocr);
+    ectx.allocr = NULL;
+    ectx.work_buffer.clear();
+
+    ectx.t_compute_ms = ggml_time_ms() - t_start_ms;
+
+    return true;
 }
