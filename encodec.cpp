@@ -13,33 +13,55 @@ static void read_safe(std::ifstream& infile, T& dest) {
     infile.read((char*)& dest, sizeof(T));
 }
 
+static void encodec_sigmoid_impl(struct ggml_tensor * dst, const struct ggml_tensor * src, int ith, int nth, void * userdata) {
+    GGML_ASSERT(userdata == NULL);
+    GGML_ASSERT(ggml_are_same_shape(dst, src));
+    GGML_ASSERT(ggml_is_contiguous(dst));
+    GGML_ASSERT(ggml_is_contiguous(src));
+
+    const float * src_data = ggml_get_data_f32(src);
+    float * dst_data = ggml_get_data_f32(dst);
+
+    const int ne = (int)ggml_nelements(dst);
+    const int dr = (ne + nth - 1) / nth;
+    const int ie0 = dr * ith;
+    const int ie1 = std::min(ie0 + dr, ne);
+
+    for (int i = ie0; i < ie1; ++i) {
+        dst_data[i] = 1.0f / (1.0f + expf(-src_data[i]));
+    }
+}
+
+static struct ggml_tensor * encodec_sigmoid(ggml_context * ctx, struct ggml_tensor * x) {
+    return ggml_map_custom1(ctx, x, encodec_sigmoid_impl, GGML_N_TASKS_MAX, NULL);
+}
+
 static int get_extra_padding_for_conv_1d(ggml_tensor * inp, float kernel_size, float stride, float padding_total) {
     float length = inp->ne[0];
     float n_frames = (length - kernel_size + padding_total) / stride + 1.0f;
-    int ideal_length = (std::ceilf(n_frames) - 1) * stride + (kernel_size - padding_total);
+    int ideal_length = (ceilf(n_frames) - 1) * stride + (kernel_size - padding_total);
     return ideal_length - length;
 }
 
 static struct ggml_tensor * pad_1d(ggml_context * ctx0, ggml_tensor * inp, int padding_left, int padding_right) {
     int length = inp->ne[0];
     int dim = inp->ne[1];
-    ENCODEC_ASSERT(padding_left  >= 0);
-    ENCODEC_ASSERT(padding_right >= 0);
 
     const int max_pad = std::max(padding_left, padding_right);
     int extra_pad = 0;
 
     if (length <= max_pad) {
         extra_pad = max_pad - length + 1;
-        int padding[2] = {0, extra_pad};
-        inp = ggml_pad_1d_constant(ctx0, inp, padding, 0);
+
+        // constant padding
+        struct ggml_tensor * out = ggml_new_tensor_2d(ctx0, inp->type, length+extra_pad, dim);
+        ggml_set_zero(out);
+        out = ggml_set_2d(ctx0, out, inp, out->nb[1], 0);
     }
 
-    int padding[2] = {padding_left, padding_right};
-    struct ggml_tensor * padded = ggml_pad_1d_reflective(ctx0, inp, padding);
+    struct ggml_tensor * padded = ggml_pad_reflec_1d(ctx0, inp, padding_left, padding_right);
 
     const int end = padded->ne[0] - extra_pad;
-
     struct ggml_tensor *dest = ggml_view_2d(ctx0, padded, end, dim, padded->nb[1], 0);
 
     return dest;
@@ -61,7 +83,7 @@ static struct ggml_tensor * unpad_1d(ggml_context * ctx0, ggml_tensor * inp, int
     return dst;
 }
 
-struct ggml_tensor * strided_conv_1d(
+static struct ggml_tensor * strided_conv_1d(
             ggml_context * ctx0,
              ggml_tensor * inp,
              ggml_tensor * conv_w,
@@ -69,12 +91,10 @@ struct ggml_tensor * strided_conv_1d(
                      int   stride) {
     int kernel_size   = conv_w->ne[0];
     int padding_total = kernel_size - stride;
-
     int extra_padding = get_extra_padding_for_conv_1d(inp, kernel_size, stride, padding_total);
 
     struct ggml_tensor * padded_inp = pad_1d(ctx0, inp, padding_total, extra_padding);
-
-    struct ggml_tensor * dst = ggml_conv_1d(ctx0, conv_w, padded_inp, stride);
+    struct ggml_tensor * dst = ggml_conv_1d(ctx0, conv_w, padded_inp, stride, 0, 1);
 
     // add bias
     dst = ggml_transpose(ctx0, dst);
@@ -84,13 +104,13 @@ struct ggml_tensor * strided_conv_1d(
     return dst;
 }
 
-struct ggml_tensor * forward_pass_lstm_unilayer(
-    struct ggml_context * ctx0,
-    struct ggml_tensor * inp,
-    struct ggml_tensor * weight_ih,
-    struct ggml_tensor * weight_hh,
-    struct ggml_tensor * bias_ih,
-    struct ggml_tensor * bias_hh) {
+static struct ggml_tensor * forward_pass_lstm_unilayer(
+            struct ggml_context * ctx0,
+            struct ggml_tensor * inp,
+            struct ggml_tensor * weight_ih,
+            struct ggml_tensor * weight_hh,
+            struct ggml_tensor * bias_ih,
+            struct ggml_tensor * bias_hh) {
 
     const int input_dim  = inp->ne[1];
     const int hidden_dim = weight_ih->ne[1]/4;
@@ -98,13 +118,14 @@ struct ggml_tensor * forward_pass_lstm_unilayer(
 
     struct ggml_tensor * hs = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
 
-    struct ggml_tensor * c_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim); 
+    struct ggml_tensor * c_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim);
     struct ggml_tensor * h_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim);
 
-    ggml_set_zero(h_t);
+    h_t = ggml_set_zero(h_t);
+    c_t = ggml_set_zero(c_t);
 
     struct ggml_tensor * current = ggml_cont(ctx0, ggml_transpose(ctx0, inp));
-    
+
     for (int t = 0; t < seq_length; t++) {
         struct ggml_tensor * x_t = ggml_view_1d(ctx0, current, input_dim, t*current->nb[1]);
 
@@ -116,10 +137,10 @@ struct ggml_tensor * forward_pass_lstm_unilayer(
 
         struct ggml_tensor * out_gates = ggml_add(ctx0, inp_gates, hid_gates);
 
-        struct ggml_tensor * i_t = ggml_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 0*sizeof(float)*hidden_dim));
-        struct ggml_tensor * f_t = ggml_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 1*sizeof(float)*hidden_dim));
+        struct ggml_tensor * i_t = encodec_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 0*sizeof(float)*hidden_dim));
+        struct ggml_tensor * f_t = encodec_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 1*sizeof(float)*hidden_dim));
         struct ggml_tensor * g_t = ggml_tanh   (ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 2*sizeof(float)*hidden_dim));
-        struct ggml_tensor * o_t = ggml_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 3*sizeof(float)*hidden_dim));
+        struct ggml_tensor * o_t = encodec_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 3*sizeof(float)*hidden_dim));
 
         c_t = ggml_add(ctx0, ggml_mul(ctx0, f_t, c_t), ggml_mul(ctx0, i_t, g_t));
         h_t = ggml_mul(ctx0, o_t, ggml_tanh(ctx0, c_t));
@@ -132,23 +153,23 @@ struct ggml_tensor * forward_pass_lstm_unilayer(
     return hs;
 }
 
-struct ggml_tensor * strided_conv_transpose_1d(
-            ggml_context * ctx0,
-             ggml_tensor * inp,
-             ggml_tensor * conv_w,
-             ggml_tensor * conv_b,
-                     int   stride) {
+static struct ggml_tensor * strided_conv_transpose_1d(
+                ggml_context * ctx0,
+                ggml_tensor * inp,
+                ggml_tensor * conv_w,
+                ggml_tensor * conv_b,
+                        int   stride) {
     int kernel_size   = conv_w->ne[0];
     int padding_total = kernel_size - stride;
 
-    struct ggml_tensor * dst = ggml_transpose_conv_1d(ctx0, conv_w, inp, stride);
+    struct ggml_tensor * dst = ggml_conv_transpose_1d(ctx0, conv_w, inp, stride, 0, 1);
 
     // add bias
     dst = ggml_transpose(ctx0, dst);
     dst = ggml_add(ctx0, ggml_repeat(ctx0, conv_b, dst), dst);
     dst = ggml_cont(ctx0, ggml_transpose(ctx0, dst));
 
-    int padding_right = std::ceilf(padding_total);
+    int padding_right = ceilf(padding_total);
     int padding_left = padding_total - padding_right;
 
     struct ggml_tensor * unpadded = unpad_1d(ctx0, dst, padding_left, padding_right);
@@ -729,30 +750,6 @@ static void encodec_model_eval(
 
     ggml_build_forward_expand(&gf, out);
     ggml_graph_compute       (ctx0, &gf);
-
-    printf("\n");
-    printf("seq_length   = %d\n", out->ne[0]);
-    printf("n_channels   = %d\n", out->ne[1]);
-    printf("out_channels = %d\n", out->ne[2]);
-    printf("\n");
-
-    out = ggml_view_2d(ctx0, out, 1000, out->ne[1], out->nb[1], 0);
-
-    for(int i = 0; i < out->ne[1]; i++) {
-        for (int j = 0; j < out->ne[0]; j++) {
-            float val =  *(float *) ((char *) out->data + j*out->nb[0] + i*out->nb[1]);
-            printf("%.4f ", val);
-        }
-        printf("\n");
-    }
-
-    // for(int i = 0; i < out->ne[1]; i++) {
-    //     for (int j = 0; j < out->ne[0]; j++) {
-    //         int32_t val =  *(int32_t *) ((char *) out->data + j*out->nb[0] + i*out->nb[1]);
-    //         printf("%d ", val);
-    //     }
-    //     printf("\n");
-    // }
 
     ggml_free(ctx0);
 }
