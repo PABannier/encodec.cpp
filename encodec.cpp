@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -207,7 +208,7 @@ static struct ggml_tensor * strided_conv_transpose_1d(
     return unpadded;
 }
 
-bool encodec_model_load(const std::string& fname, encodec_model& model) {
+bool encodec_load_model_weights(const std::string& fname, encodec_model& model) {
     fprintf(stderr, "%s: loading model from '%s'\n", __func__, fname.c_str());
 
     auto infile = std::ifstream(fname, std::ios::binary);
@@ -542,7 +543,7 @@ static struct ggml_cgraph * encodec_build_graph(
             const std::vector<float> & inp_audio) {
     const int32_t audio_length = inp_audio.size();
 
-    const auto & model = ectx.model;
+    const auto & model = *ectx.model;
 
     struct ggml_init_params ggml_params = {
         /*.mem_size   =*/ ectx.buf_compute.size(),
@@ -788,7 +789,7 @@ static struct ggml_cgraph * encodec_build_graph(
     return gf;
 }
 
-bool encodec_model_eval(
+bool encodec_reconstruct_audio(
                    encodec_context & ectx,
                 std::vector<float> & raw_audio,
                                int   n_threads) {
@@ -849,18 +850,20 @@ bool encodec_model_eval(
     return true;
 }
 
-struct encodec_context encodec_new_context_with_model(encodec_model & model) {
-    encodec_context ctx = encodec_context(model);
-    return ctx;
-}
+std::shared_ptr<encodec_context> encodec_load_model(const std::string & model_path) {
+    int64_t t_start_load_us = ggml_time_us();
 
-struct encodec_model encodec_load_model_from_file(std::string fname) {
-    encodec_model model;
-    if (!encodec_model_load(fname, model)) {
-        fprintf(stderr, "%s: failed to load model\n", __func__);
-        exit(0);
+    encodec_context ectx;
+
+    ectx.model = std::make_unique<encodec_model>();
+    if (!encodec_load_model_weights(model_path, *ectx.model)) {
+        fprintf(stderr, "%s: failed to load model weights from '%s'\n", __func__, model_path.c_str());
+        return {};
     }
-    return model;
+
+    ectx.t_load_us = ggml_time_us() - t_start_load_us;
+
+    return std::make_unique<encodec_context>(std::move(ectx));
 }
 
 void encodec_free(encodec_context & ectx) {

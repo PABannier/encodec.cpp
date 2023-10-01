@@ -131,16 +131,7 @@ struct encodec_model {
 };
 
 struct encodec_context {
-    encodec_context(encodec_model & model) : model(model) {}
-
-    ~encodec_context() {
-        if (model_owner) {
-            delete &model;
-        }
-    }
-
-    encodec_model & model;
-    bool model_owner = false;
+    std::unique_ptr<encodec_model> model;
 
     struct ggml_context * ctx_audio;
     struct ggml_tensor  * reconstructed_audio;
@@ -155,15 +146,13 @@ struct encodec_context {
     struct ggml_allocr * allocr = {};
 
     // statistics
+    int64_t t_load_us    = 0;
     int64_t t_compute_ms = 0;
 };
 
+std::shared_ptr<encodec_context> encodec_load_model(const std::string & model_path);
 
-struct encodec_model encodec_load_model_from_file(std::string fname);
-
-struct encodec_context encodec_new_context_with_model(encodec_model & model);
-
-bool encodec_model_eval(
+bool encodec_reconstruct_audio(
                    encodec_context & ectx,
                 std::vector<float> & raw_audio,
                                int   n_threads);
