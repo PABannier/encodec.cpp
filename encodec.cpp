@@ -1,4 +1,5 @@
 #include <cmath>
+#include <cstring>
 #include <stdexcept>
 #include <fstream>
 #include <map>
@@ -191,7 +192,7 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
     {
         uint32_t magic;
         read_safe(infile, magic);
-        if (magic != ENCODEC_FILE_MAGIC) {
+        if (!strcmp(magic, ENCODEC_FILE_MAGIC)) {
             fprintf(stderr, "%s: invalid model file '%s' (bad magic)\n", __func__, fname.c_str());
             return false;
         }
@@ -486,7 +487,7 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
             }
 
             if (tensor->ne[0] != ne[0] || tensor->ne[1] != ne[1] || tensor->ne[2] != ne[2]) {
-                fprintf(stderr, "%s: tensor '%s' has wrong shape in model file: got [%lld, %lld, %lld], expected [%d, %d, %d]\n",
+                fprintf(stderr, "%s: tensor '%s' has wrong shape in model file: got [%ld, %ld, %ld], expected [%d, %d, %d]\n",
                         __func__, name.data(), tensor->ne[0], tensor->ne[1], tensor->ne[2], ne[0], ne[1], ne[2]);
                 return false;
             }
