@@ -1,4 +1,5 @@
 #include <cmath>
+#include <cstring>
 #include <stdexcept>
 #include <fstream>
 #include <map>
@@ -525,7 +526,6 @@ static void encodec_model_eval(
 
     struct ggml_context * ctx0 = ggml_init(params);
     struct ggml_cgraph    gf   = {};
-    gf.n_threads = n_threads;
 
     struct ggml_tensor * inp = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, raw_audio.size());
     memcpy(inp->data, raw_audio.data(), raw_audio.size()*ggml_element_size(inp));
@@ -748,8 +748,8 @@ static void encodec_model_eval(
         out = decoded_inp;
     }
 
-    ggml_build_forward_expand(&gf, out);
-    ggml_graph_compute       (ctx0, &gf);
+    ggml_build_forward_expand  (&gf, out);
+    ggml_graph_compute_with_ctx(ctx0, &gf, n_threads);
 
     ggml_free(ctx0);
 }
