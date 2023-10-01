@@ -79,10 +79,7 @@ struct encodec_encoder {
 };
 
 struct encodec_quant_block {
-    struct ggml_tensor * inited;
-    struct ggml_tensor * cluster_size;
     struct ggml_tensor * embed;
-    struct ggml_tensor * embed_avg;
 };
 
 struct encodec_quantizer {

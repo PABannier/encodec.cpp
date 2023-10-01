@@ -11,7 +11,7 @@ For each tensor, the bytes are packed as follows:
     - Name                    (char[name_length])
     - Data                    (float[n_dims])
 
-NOTE
+Note
 ----
 Encodec uses weight normalization for its convolutional layers. All the weights are
 decomposed into two tensors called with the suffixes _weight_v and _weight_g. A simple
@@ -19,6 +19,15 @@ call to the hook torch._weight_norm allows to get the final weight tensor of the
 convolution from weight_v and weight_g. To drastically reduce the number of operations
 at inference time, the ggml weights file only contain the final convolution weights but
 does not store the decomposition into weight_v and weight_g.
+
+Usage
+-----
+
+```bash
+    python convert.py \
+        --dir-model ./ggml_weights/ \
+        --out-dir ./ggml_weights/
+```
 """
 import argparse
 from pathlib import Path
@@ -32,12 +41,21 @@ parser.add_argument("--dir-model", type=str, required=True)
 parser.add_argument("--out-dir", type=str, required=True)
 
 
-def parse_model(checkpoint, outfile):
+def parse_codec_model(checkpoint, out_dir):
+    """Load encodec model checkpoint."""
+    outfile = open(out_dir, "wb")
+    outfile.write(struct.pack("i", 0x67676d6c))  # ggml magic
+
     for name in checkpoint.keys():
         if "weight_g" in name:
             # the tensor has already been parsed with the corresponding "weight_v"
             # tensor to form the final weights tensor of the convolution, therefore
             # we skip it
+            continue
+
+        if "inited" in name or "cluster_size" in name or "embed_avg" in name:
+            # "inited", "cluster_size" and "embed_avg" tensors in quantizer are not used
+            # for the forward pass
             continue
 
         var_data = checkpoint[name]
@@ -49,7 +67,7 @@ def parse_model(checkpoint, outfile):
             # weight_v has its corresponding magnitude tensor to rescale the weights
             # of the convolutional layers. We parse both kinds of weights jointly to
             # build the final weight tensor of the convolution.
-            base_name = name.split(".")[:-1] 
+            base_name = name.split(".")[:-1]
             weight_g_name = ".".join(base_name + ["weight_g"])
             var_data_g = checkpoint[weight_g_name]
 
@@ -75,6 +93,8 @@ def parse_model(checkpoint, outfile):
 
         var_data.tofile(outfile)
 
+    outfile.close()
+
 
 if __name__ == "__main__":
     args = parser.parse_args()
@@ -84,12 +104,9 @@ if __name__ == "__main__":
     out_dir = Path(args.out_dir)
     out_dir.mkdir(exist_ok=True, parents=True)
 
-    outfile = open(out_dir / "ggml-model.bin", "wb")
-    outfile.write(struct.pack("i", 0x67676d6c))  # ggml magic
+    outfile = Path(out_dir / "ggml-model.bin")
 
     checkpoint = torch.load(dir_model / "encodec_24khz-d7cc33bc.th", map_location="cpu")
-    parse_model(checkpoint, outfile)
-
-    outfile.close()
+    parse_codec_model(checkpoint, outfile)
 
     print("Done.")

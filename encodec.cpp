@@ -459,15 +459,9 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
             model.quantizer.blocks.resize(n_q);
 
             for (int i = 0; i < n_q; i++) {
-                model.quantizer.blocks[i].inited       = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
-                model.quantizer.blocks[i].cluster_size = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_bins);
                 model.quantizer.blocks[i].embed        = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hidden_dim, n_bins);
-                model.quantizer.blocks[i].embed_avg    = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hidden_dim, n_bins);
 
-                model.tensors["quantizer.vq.layers." + std::to_string(i) + "._codebook.inited"]       = model.quantizer.blocks[i].inited;
-                model.tensors["quantizer.vq.layers." + std::to_string(i) + "._codebook.cluster_size"] = model.quantizer.blocks[i].cluster_size;
                 model.tensors["quantizer.vq.layers." + std::to_string(i) + "._codebook.embed"]        = model.quantizer.blocks[i].embed;
-                model.tensors["quantizer.vq.layers." + std::to_string(i) + "._codebook.embed_avg"]    = model.quantizer.blocks[i].embed_avg;
             }
         }
 
@@ -529,7 +523,7 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
 
             infile.read(reinterpret_cast<char *>(tensor->data), ggml_nbytes(tensor));
 
-            // printf("%48s - [%5d, %5d, %5d], type = %6s, %6.2f MB\n", name.data(), ne[0], ne[1], ne[2], ftype == 0 ? "float" : "f16", ggml_nbytes(tensor)/1024.0/1024.0);
+            printf("%48s - [%5d, %5d, %5d], type = %6s, %6.2f MB\n", name.data(), ne[0], ne[1], ne[2], ftype == 0 ? "float" : "f16", ggml_nbytes(tensor)/1024.0/1024.0);
 
             total_size += ggml_nbytes(tensor);
             model.n_loaded++;
