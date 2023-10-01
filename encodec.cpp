@@ -953,10 +953,7 @@ static bool encodec_model_eval(
 }
 
 void encodec_free(encodec_context & ectx) {
-    if (ectx) {
-        if (ectx.ctx_audio) {
-            ggml_free(ectx.ctx_audio);
-        }
-        delete ectx;
+    if (ectx.ctx_audio) {
+        ggml_free(ectx.ctx_audio);
     }
 }
