@@ -20,6 +20,8 @@ endif()
 
 set(ENCODEC_LIB encodec.cpp)
 
+add_subdirectory(ggml)
+
 add_library(
         ${ENCODEC_LIB}
         encodec
