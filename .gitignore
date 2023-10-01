@@ -6,3 +6,5 @@ encodec
 *.th
 main
 .vscode/
+
+build/

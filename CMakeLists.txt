@@ -16,8 +16,6 @@ else()
     set(ENCODEC_STANDALONE OFF)
 endif()
 
-option(ENCODEC_BUILD_EXAMPLES             "encodec: build examples" ${ENCODEC_STANDALONE})
-
 # Build libraries
 
 set(ENCODEC_LIB encodec.cpp)
@@ -32,7 +30,3 @@ add_library(
 target_link_libraries(${ENCODEC_LIB} PUBLIC ggml)
 target_include_directories(${ENCODEC_LIB} PUBLIC .)
 target_compile_features(${ENCODEC_LIB} PUBLIC cxx_std_11)
-
-if (ENCODEC_BUILD_EXAMPLES)
-    add_subdirectory(examples)
-endif()
