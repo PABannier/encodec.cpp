@@ -16,6 +16,9 @@ struct encodec_params {
     // weights location
     std::string model_path = "./ggml_weights";
 
+    // input location
+    std::string original_audio_path = "./input.wav";
+
     // output location
     std::string dest_wav_path = "output.wav";
 };
@@ -28,6 +31,8 @@ void encodec_print_usage(char ** argv, const encodec_params & params) {
     fprintf(stderr, "  -t N, --threads N     number of threads to use during computation (default: %d)\n", params.n_threads);
     fprintf(stderr, "  -m FNAME, --model FNAME\n");
     fprintf(stderr, "                        model path (default: %s)\n", params.model_path.c_str());
+    fprintf(stderr, "  -i FNAME, --input FNAME\n");
+    fprintf(stderr, "                        original audio wav (default: %s)\n", params.dest_wav_path.c_str());
     fprintf(stderr, "  -o FNAME, --outwav FNAME\n");
     fprintf(stderr, "                        output generated wav (default: %s)\n", params.dest_wav_path.c_str());
     fprintf(stderr, "\n");
@@ -43,6 +48,8 @@ int encodec_params_parse(int argc, char ** argv, encodec_params & params) {
             params.model_path = argv[++i];
         } else if (arg == "-o" || arg == "--outwav") {
             params.dest_wav_path = argv[++i];
+        } else if (arg == "-i" || arg == "--input") {
+            params.original_audio_path = argv[++i];
         } else if (arg == "-h" || arg == "--help") {
             encodec_print_usage(argv, params);
             exit(0);
@@ -54,6 +61,29 @@ int encodec_params_parse(int argc, char ** argv, encodec_params & params) {
     }
 
     return 0;
+}
+
+std::vector<float> read_wav_from_disk(std::string in_path) {
+    uint32_t channels;
+    uint32_t sample_rate;
+    drwav_uint64 total_frame_count;
+
+    float * raw_audio = drwav_open_file_and_read_pcm_frames_f32(
+        in_path.c_str(), &channels, &sample_rate, &total_frame_count, NULL);
+
+    if (raw_audio == NULL) {
+        fprintf(stderr, "%s: could not read wav file\n", __func__);
+        exit(1);
+    }
+
+    fprintf(stderr, "Number of frames read = %lld.\n", total_frame_count);
+
+    std::vector<float> out(total_frame_count);
+    memcpy(out.data(), raw_audio, total_frame_count * sizeof(float));
+
+    drwav_free(raw_audio, NULL);
+
+    return out;
 }
 
 void write_wav_on_disk(std::vector<float>& audio_arr, std::string dest_path) {
@@ -100,12 +130,18 @@ int main(int argc, char **argv) {
 
     printf("\n");
 
-    // generate audio
-    const int64_t t_eval_us_start = ggml_time_us();
+    // read audio from disk
+    std::vector<float> original_audio_arr = read_wav_from_disk(params.original_audio_path);
 
+    // reconstruct audio
+    const int64_t t_eval_us_start = ggml_time_us();
+    if (!encodec_model_eval(ectx, original_audio_arr, params.n_threads)) {
+        printf("%s: error during inference\n", __func__);
+        return 1;
+    }
     t_eval_us = ggml_time_us() - t_eval_us_start;
 
-    // write generated audio on disk
+    // write reconstructed audio on disk
     std::vector<float> audio_arr(ectx.reconstructed_audio->ne[0]);
     memcpy(ectx.reconstructed_audio->data, audio_arr.data(), audio_arr.size() * sizeof(float));
     write_wav_on_disk(audio_arr, params.dest_wav_path);
