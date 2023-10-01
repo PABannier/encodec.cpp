@@ -13,7 +13,7 @@
 #define ENCODEC_FILE_MAGIC   'ggml'
 #define ENCODEC_FILE_VERSION 1
 
-static const size_t MB = 4*1024*1024;
+static const size_t MB = 1024*1024;
 
 struct encodec_hparams {
     int32_t in_channels          = 1;
