@@ -14,106 +14,6 @@
 
 static const size_t TENSOR_ALIGNMENT = 32;
 
-// res + downsample block at some ratio
-struct encodec_encoder_block {
-    // conv1
-    struct ggml_tensor * conv_1_w;
-    struct ggml_tensor * conv_1_b;
-
-    // conv2
-    struct ggml_tensor * conv_2_w;
-    struct ggml_tensor * conv_2_b;
-
-    // shortcut
-    struct ggml_tensor * conv_sc_w;
-    struct ggml_tensor * conv_sc_b;
-
-    // downsampling layers
-    struct ggml_tensor * ds_conv_w;
-    struct ggml_tensor * ds_conv_b;
-};
-
-struct encodec_lstm {
-    struct ggml_tensor * l0_ih_w;
-    struct ggml_tensor * l0_hh_w;
-
-    struct ggml_tensor * l0_ih_b;
-    struct ggml_tensor * l0_hh_b;
-
-    struct ggml_tensor * l1_ih_w;
-    struct ggml_tensor * l1_hh_w;
-
-    struct ggml_tensor * l1_ih_b;
-    struct ggml_tensor * l1_hh_b;
-};
-
-struct encodec_encoder {
-    struct ggml_tensor * init_conv_w;
-    struct ggml_tensor * init_conv_b;
-
-    encodec_lstm lstm;
-
-    struct ggml_tensor * final_conv_w;
-    struct ggml_tensor * final_conv_b;
-
-    std::vector<encodec_encoder_block> blocks;
-};
-
-struct encodec_quant_block {
-    struct ggml_tensor * inited;
-    struct ggml_tensor * cluster_size;
-    struct ggml_tensor * embed;
-    struct ggml_tensor * embed_avg;
-};
-
-struct encodec_quantizer {
-    std::vector<encodec_quant_block> blocks;
-};
-
-struct encodec_decoder_block {
-    //upsampling layers
-    struct ggml_tensor * us_conv_w;
-    struct ggml_tensor * us_conv_b;
-
-    // conv1
-    struct ggml_tensor * conv_1_w;
-    struct ggml_tensor * conv_1_b;
-
-    // conv2
-    struct ggml_tensor * conv_2_w;
-    struct ggml_tensor * conv_2_b;
-
-    // shortcut
-    struct ggml_tensor * conv_sc_w;
-    struct ggml_tensor * conv_sc_b;
-};
-
-struct encodec_decoder {
-    struct ggml_tensor * init_conv_w;
-    struct ggml_tensor * init_conv_b;
-
-    encodec_lstm lstm;
-
-    struct ggml_tensor * final_conv_w;
-    struct ggml_tensor * final_conv_b;
-
-    std::vector<encodec_decoder_block> blocks;
-};
-
-struct encodec_model {
-    encodec_hparams hparams;
-
-    encodec_encoder   encoder;
-    encodec_quantizer quantizer;
-    encodec_decoder   decoder;
-
-    // context
-    struct ggml_context * ctx;
-    int n_loaded;
-
-    std::map<std::string, struct ggml_tensor *> tensors;
-};
-
 template<typename T>
 static void read_safe(std::ifstream& infile, T& dest) {
     infile.read((char*)& dest, sizeof(T));
@@ -137,7 +37,12 @@ static void ggml_disconnect_node_from_graph(ggml_tensor * t) {
     }
 }
 
-static void encodec_sigmoid_impl(struct ggml_tensor * dst, const struct ggml_tensor * src, int ith, int nth, void * userdata) {
+static void encodec_sigmoid_impl(
+                    struct ggml_tensor * dst,
+              const struct ggml_tensor * src,
+                                   int   ith,
+                                   int   nth,
+                                  void * userdata) {
     GGML_ASSERT(userdata == NULL);
     GGML_ASSERT(ggml_are_same_shape(dst, src));
     GGML_ASSERT(ggml_is_contiguous(dst));
@@ -208,11 +113,11 @@ static struct ggml_tensor * unpad_1d(ggml_context * ctx0, ggml_tensor * inp, int
 }
 
 static struct ggml_tensor * strided_conv_1d(
-            ggml_context * ctx0,
-             ggml_tensor * inp,
-             ggml_tensor * conv_w,
-             ggml_tensor * conv_b,
-                     int   stride) {
+             ggml_context * ctx0,
+              ggml_tensor * inp,
+              ggml_tensor * conv_w,
+              ggml_tensor * conv_b,
+                      int   stride) {
     int kernel_size   = conv_w->ne[0];
     int padding_total = kernel_size - stride;
     int extra_padding = get_extra_padding_for_conv_1d(inp, kernel_size, stride, padding_total);
@@ -230,11 +135,11 @@ static struct ggml_tensor * strided_conv_1d(
 
 static struct ggml_tensor * forward_pass_lstm_unilayer(
             struct ggml_context * ctx0,
-            struct ggml_tensor * inp,
-            struct ggml_tensor * weight_ih,
-            struct ggml_tensor * weight_hh,
-            struct ggml_tensor * bias_ih,
-            struct ggml_tensor * bias_hh) {
+             struct ggml_tensor * inp,
+             struct ggml_tensor * weight_ih,
+             struct ggml_tensor * weight_hh,
+             struct ggml_tensor * bias_ih,
+             struct ggml_tensor * bias_hh) {
 
     const int input_dim  = inp->ne[1];
     const int hidden_dim = weight_ih->ne[1]/4;
@@ -624,7 +529,7 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
 
             infile.read(reinterpret_cast<char *>(tensor->data), ggml_nbytes(tensor));
 
-            printf("%48s - [%5d, %5d, %5d], type = %6s, %6.2f MB\n", name.data(), ne[0], ne[1], ne[2], ftype == 0 ? "float" : "f16", ggml_nbytes(tensor)/1024.0/1024.0);
+            // printf("%48s - [%5d, %5d, %5d], type = %6s, %6.2f MB\n", name.data(), ne[0], ne[1], ne[2], ftype == 0 ? "float" : "f16", ggml_nbytes(tensor)/1024.0/1024.0);
 
             total_size += ggml_nbytes(tensor);
             model.n_loaded++;
@@ -889,13 +794,11 @@ static struct ggml_cgraph * encodec_build_graph(
     return gf;
 }
 
-static bool encodec_model_eval(
-                std::vector<float> & raw_audio,
+bool encodec_model_eval(
                    encodec_context & ectx,
+                std::vector<float> & raw_audio,
                                int   n_threads) {
     const int64_t t_start_ms = ggml_time_ms();
-
-    fprintf(stderr, "%s: raw audio (t=%zu)\n", __func__, raw_audio.size());
 
     static const size_t buf_size = 256u*1024*1024;
 
@@ -950,4 +853,24 @@ static bool encodec_model_eval(
     ectx.t_compute_ms = ggml_time_ms() - t_start_ms;
 
     return true;
+}
+
+struct encodec_context encodec_new_context_with_model(encodec_model & model) {
+    encodec_context ctx = encodec_context(model);
+    return ctx;
+}
+
+struct encodec_model encodec_load_model_from_file(std::string fname) {
+    encodec_model model;
+    if (!encodec_model_load(fname, model)) {
+        fprintf(stderr, "%s: failed to load model\n", __func__);
+        exit(0);
+    }
+    return model;
+}
+
+void encodec_free(encodec_context & ectx) {
+    if (ectx.ctx_audio) {
+        ggml_free(ectx.ctx_audio);
+    }
 }

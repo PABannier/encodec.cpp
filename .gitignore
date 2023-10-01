@@ -4,7 +4,6 @@ main.dSYM
 encodec
 *.o
 *.th
-main
 .vscode/
 
 build/
