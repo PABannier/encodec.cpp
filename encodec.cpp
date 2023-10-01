@@ -1,13 +1,17 @@
-#include "encodec.h"
-#include "ggml.h"
-#include "util.h"
-
 #include <cmath>
 #include <stdexcept>
 #include <fstream>
 #include <map>
 #include <string>
 #include <vector>
+
+#include "encodec.h"
+#include "ggml.h"
+
+template<typename T>
+static void read_safe(std::ifstream& infile, T& dest) {
+    infile.read((char*)& dest, sizeof(T));
+}
 
 static int get_extra_padding_for_conv_1d(ggml_tensor * inp, float kernel_size, float stride, float padding_total) {
     float length = inp->ne[0];
