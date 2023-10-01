@@ -529,7 +529,7 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
 
             infile.read(reinterpret_cast<char *>(tensor->data), ggml_nbytes(tensor));
 
-            printf("%48s - [%5d, %5d, %5d], type = %6s, %6.2f MB\n", name.data(), ne[0], ne[1], ne[2], ftype == 0 ? "float" : "f16", ggml_nbytes(tensor)/1024.0/1024.0);
+            // printf("%48s - [%5d, %5d, %5d], type = %6s, %6.2f MB\n", name.data(), ne[0], ne[1], ne[2], ftype == 0 ? "float" : "f16", ggml_nbytes(tensor)/1024.0/1024.0);
 
             total_size += ggml_nbytes(tensor);
             model.n_loaded++;
@@ -799,8 +799,6 @@ bool encodec_model_eval(
                 std::vector<float> & raw_audio,
                                int   n_threads) {
     const int64_t t_start_ms = ggml_time_ms();
-
-    fprintf(stderr, "%s: raw audio (t=%zu)\n", __func__, raw_audio.size());
 
     static const size_t buf_size = 256u*1024*1024;
 

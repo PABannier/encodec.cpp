@@ -63,7 +63,7 @@ int encodec_params_parse(int argc, char ** argv, encodec_params & params) {
     return 0;
 }
 
-std::vector<float> read_wav_from_disk(std::string in_path) {
+bool read_wav_from_disk(std::string in_path, std::vector<float>& audio_arr) {
     uint32_t channels;
     uint32_t sample_rate;
     drwav_uint64 total_frame_count;
@@ -73,17 +73,17 @@ std::vector<float> read_wav_from_disk(std::string in_path) {
 
     if (raw_audio == NULL) {
         fprintf(stderr, "%s: could not read wav file\n", __func__);
-        exit(1);
+        return false;
     }
 
     fprintf(stderr, "Number of frames read = %lld.\n", total_frame_count);
 
-    std::vector<float> out(total_frame_count);
-    memcpy(out.data(), raw_audio, total_frame_count * sizeof(float));
+    audio_arr.resize(total_frame_count);
+    memcpy(audio_arr.data(), raw_audio, total_frame_count * sizeof(float));
 
     drwav_free(raw_audio, NULL);
 
-    return out;
+    return true;
 }
 
 void write_wav_on_disk(std::vector<float>& audio_arr, std::string dest_path) {
@@ -99,7 +99,7 @@ void write_wav_on_disk(std::vector<float>& audio_arr, std::string dest_path) {
     drwav_uint64 frames = drwav_write_pcm_frames(&wav, audio_arr.size(), audio_arr.data());
     drwav_uninit(&wav);
 
-    fprintf(stderr, "Number of frames written = %lld.\n", frames);
+    fprintf(stderr, "%s: Number of frames written = %lld.\n", __func__, frames);
 }
 
 struct encodec_context encodec_init_from_params(encodec_params & params) {
@@ -131,7 +131,11 @@ int main(int argc, char **argv) {
     printf("\n");
 
     // read audio from disk
-    std::vector<float> original_audio_arr = read_wav_from_disk(params.original_audio_path);
+    std::vector<float> original_audio_arr;
+    if(!read_wav_from_disk(params.original_audio_path, original_audio_arr)) {
+        printf("%s: error during reading wav file\n", __func__);
+        return 1;
+    }
 
     // reconstruct audio
     const int64_t t_eval_us_start = ggml_time_us();
