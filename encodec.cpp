@@ -8,6 +8,7 @@
 
 #include "encodec.h"
 #include "ggml.h"
+#include "ggml-alloc.h"
 
 
 static const size_t TENSOR_ALIGNMENT = 32;
@@ -27,14 +28,14 @@ struct encodec_encoder_block {
     struct ggml_tensor * conv_sc_b;
 
     // downsampling layers
-    struct ggml_tensor * ds_conv_w;  
+    struct ggml_tensor * ds_conv_w;
     struct ggml_tensor * ds_conv_b;
 };
 
 struct encodec_lstm {
     struct ggml_tensor * l0_ih_w;
     struct ggml_tensor * l0_hh_w;
-    
+
     struct ggml_tensor * l0_ih_b;
     struct ggml_tensor * l0_hh_b;
 
@@ -637,10 +638,12 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
 }
 
 static struct ggml_cgraph * encodec_build_graph(
-                     encodec_context & ectx, 
+                     encodec_context & ectx,
             const std::vector<float> & inp_audio) {
     const int32_t audio_length = inp_audio.size();
-    
+
+    const auto & model = ectx.model;
+
     struct ggml_init_params ggml_params = {
         /*.mem_size   =*/ ectx.buf_compute.size(),
         /*.mem_buffer =*/ ectx.buf_compute.data(),
@@ -652,7 +655,7 @@ static struct ggml_cgraph * encodec_build_graph(
 
     struct ggml_tensor * inp = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, audio_length);
     ggml_allocr_alloc(ectx.allocr, inp);
-    if (!ggml_allocr_measure(ectx.allocr)) {
+    if (!ggml_allocr_is_measure(ectx.allocr)) {
         memcpy(inp->data, inp_audio.data(), audio_length*ggml_element_size(inp));
     }
 
@@ -843,11 +846,11 @@ static struct ggml_cgraph * encodec_build_graph(
                 ctx0, inpL, block.us_conv_w, block.us_conv_b, ratios[layer_ix]);
 
             struct ggml_tensor * current = inpL;
-            
+
             // shortcut
             struct ggml_tensor * shortcut = strided_conv_1d(
                 ctx0, inpL, block.conv_sc_w, block.conv_sc_b, stride);
-            
+
             // conv1
             current = ggml_elu(ctx0, current);
 
@@ -886,13 +889,9 @@ static struct ggml_cgraph * encodec_build_graph(
 }
 
 static bool encodec_model_eval(
-                std::vector<float> & raw_audio, 
-                   encodec_context & ectx, 
+                std::vector<float> & raw_audio,
+                   encodec_context & ectx,
                                int   n_threads) {
-    if (!ectx.model) {
-        return false;
-    }
-
     const int64_t t_start_ms = ggml_time_ms();
 
     fprintf(stderr, "%s: raw audio (t=%zu)\n", __func__, raw_audio.size());
