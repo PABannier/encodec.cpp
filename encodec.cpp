@@ -14,7 +14,6 @@
 
 static const size_t TENSOR_ALIGNMENT = 32;
 
-
 template<typename T>
 static void read_safe(std::ifstream& infile, T& dest) {
     infile.read((char*)& dest, sizeof(T));
@@ -38,7 +37,12 @@ static void ggml_disconnect_node_from_graph(ggml_tensor * t) {
     }
 }
 
-static void encodec_sigmoid_impl(struct ggml_tensor * dst, const struct ggml_tensor * src, int ith, int nth, void * userdata) {
+static void encodec_sigmoid_impl(
+                    struct ggml_tensor * dst,
+              const struct ggml_tensor * src,
+                                   int   ith,
+                                   int   nth,
+                                  void * userdata) {
     GGML_ASSERT(userdata == NULL);
     GGML_ASSERT(ggml_are_same_shape(dst, src));
     GGML_ASSERT(ggml_is_contiguous(dst));
@@ -109,11 +113,11 @@ static struct ggml_tensor * unpad_1d(ggml_context * ctx0, ggml_tensor * inp, int
 }
 
 static struct ggml_tensor * strided_conv_1d(
-            ggml_context * ctx0,
-             ggml_tensor * inp,
-             ggml_tensor * conv_w,
-             ggml_tensor * conv_b,
-                     int   stride) {
+             ggml_context * ctx0,
+              ggml_tensor * inp,
+              ggml_tensor * conv_w,
+              ggml_tensor * conv_b,
+                      int   stride) {
     int kernel_size   = conv_w->ne[0];
     int padding_total = kernel_size - stride;
     int extra_padding = get_extra_padding_for_conv_1d(inp, kernel_size, stride, padding_total);
@@ -131,11 +135,11 @@ static struct ggml_tensor * strided_conv_1d(
 
 static struct ggml_tensor * forward_pass_lstm_unilayer(
             struct ggml_context * ctx0,
-            struct ggml_tensor * inp,
-            struct ggml_tensor * weight_ih,
-            struct ggml_tensor * weight_hh,
-            struct ggml_tensor * bias_ih,
-            struct ggml_tensor * bias_hh) {
+             struct ggml_tensor * inp,
+             struct ggml_tensor * weight_ih,
+             struct ggml_tensor * weight_hh,
+             struct ggml_tensor * bias_ih,
+             struct ggml_tensor * bias_hh) {
 
     const int input_dim  = inp->ne[1];
     const int hidden_dim = weight_ih->ne[1]/4;
