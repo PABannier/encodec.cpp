@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -139,7 +140,8 @@ static struct ggml_tensor * forward_pass_lstm_unilayer(
              struct ggml_tensor * weight_ih,
              struct ggml_tensor * weight_hh,
              struct ggml_tensor * bias_ih,
-             struct ggml_tensor * bias_hh) {
+             struct ggml_tensor * bias_hh,
+                           bool   is_measure) {
 
     const int input_dim  = inp->ne[1];
     const int hidden_dim = weight_ih->ne[1]/4;
@@ -150,8 +152,10 @@ static struct ggml_tensor * forward_pass_lstm_unilayer(
     struct ggml_tensor * c_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim);
     struct ggml_tensor * h_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim);
 
-    h_t = ggml_set_zero(h_t);
-    c_t = ggml_set_zero(c_t);
+    if (is_measure) {
+        h_t = ggml_set_zero(h_t);
+        c_t = ggml_set_zero(c_t);
+    }
 
     struct ggml_tensor * current = ggml_cont(ctx0, ggml_transpose(ctx0, inp));
 
@@ -168,7 +172,7 @@ static struct ggml_tensor * forward_pass_lstm_unilayer(
 
         struct ggml_tensor * i_t = encodec_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 0*sizeof(float)*hidden_dim));
         struct ggml_tensor * f_t = encodec_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 1*sizeof(float)*hidden_dim));
-        struct ggml_tensor * g_t = ggml_tanh   (ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 2*sizeof(float)*hidden_dim));
+        struct ggml_tensor * g_t = ggml_tanh      (ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 2*sizeof(float)*hidden_dim));
         struct ggml_tensor * o_t = encodec_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 3*sizeof(float)*hidden_dim));
 
         c_t = ggml_add(ctx0, ggml_mul(ctx0, f_t, c_t), ggml_mul(ctx0, i_t, g_t));
@@ -207,7 +211,7 @@ static struct ggml_tensor * strided_conv_transpose_1d(
     return unpadded;
 }
 
-bool encodec_model_load(const std::string& fname, encodec_model& model) {
+bool encodec_load_model_weights(const std::string& fname, encodec_model& model) {
     fprintf(stderr, "%s: loading model from '%s'\n", __func__, fname.c_str());
 
     auto infile = std::ifstream(fname, std::ios::binary);
@@ -459,15 +463,9 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
             model.quantizer.blocks.resize(n_q);
 
             for (int i = 0; i < n_q; i++) {
-                model.quantizer.blocks[i].inited       = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
-                model.quantizer.blocks[i].cluster_size = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_bins);
                 model.quantizer.blocks[i].embed        = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hidden_dim, n_bins);
-                model.quantizer.blocks[i].embed_avg    = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hidden_dim, n_bins);
 
-                model.tensors["quantizer.vq.layers." + std::to_string(i) + "._codebook.inited"]       = model.quantizer.blocks[i].inited;
-                model.tensors["quantizer.vq.layers." + std::to_string(i) + "._codebook.cluster_size"] = model.quantizer.blocks[i].cluster_size;
                 model.tensors["quantizer.vq.layers." + std::to_string(i) + "._codebook.embed"]        = model.quantizer.blocks[i].embed;
-                model.tensors["quantizer.vq.layers." + std::to_string(i) + "._codebook.embed_avg"]    = model.quantizer.blocks[i].embed_avg;
             }
         }
 
@@ -529,7 +527,7 @@ bool encodec_model_load(const std::string& fname, encodec_model& model) {
 
             infile.read(reinterpret_cast<char *>(tensor->data), ggml_nbytes(tensor));
 
-            // printf("%48s - [%5d, %5d, %5d], type = %6s, %6.2f MB\n", name.data(), ne[0], ne[1], ne[2], ftype == 0 ? "float" : "f16", ggml_nbytes(tensor)/1024.0/1024.0);
+            printf("%48s - [%5d, %5d, %5d], type = %6s, %6.2f MB\n", name.data(), ne[0], ne[1], ne[2], ftype == 0 ? "float" : "f16", ggml_nbytes(tensor)/1024.0/1024.0);
 
             total_size += ggml_nbytes(tensor);
             model.n_loaded++;
@@ -548,7 +546,7 @@ static struct ggml_cgraph * encodec_build_graph(
             const std::vector<float> & inp_audio) {
     const int32_t audio_length = inp_audio.size();
 
-    const auto & model = ectx.model;
+    const auto & model = *ectx.model;
 
     struct ggml_init_params ggml_params = {
         /*.mem_size   =*/ ectx.buf_compute.size(),
@@ -617,11 +615,13 @@ static struct ggml_cgraph * encodec_build_graph(
 
             // first lstm layer
             struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(
-                ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
+                ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b,
+                ggml_allocr_is_measure(ectx.allocr));
 
             // second lstm layer
             struct ggml_tensor * out = forward_pass_lstm_unilayer(
-                ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
+                ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b,
+                ggml_allocr_is_measure(ectx.allocr));
 
             inpL = ggml_add(ctx0, inpL, out);
         }
@@ -723,7 +723,8 @@ static struct ggml_cgraph * encodec_build_graph(
         const int stride        = hparams.stride;
 
         struct ggml_tensor * inpL = strided_conv_1d(
-            ctx0, quantized_out, model.decoder.init_conv_w, model.decoder.init_conv_b, stride);
+            ctx0, quantized_out, model.decoder.init_conv_w,
+            model.decoder.init_conv_b, stride);
 
         // lstm
         {
@@ -733,11 +734,13 @@ static struct ggml_cgraph * encodec_build_graph(
 
             // first lstm layer
             struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(
-                ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
+                ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b,
+                ggml_allocr_is_measure(ectx.allocr));
 
             // second lstm layer
             struct ggml_tensor * out = forward_pass_lstm_unilayer(
-                ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
+                ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b,
+                ggml_allocr_is_measure(ectx.allocr));
 
             inpL = ggml_add(ctx0, inpL, out);
         }
@@ -794,7 +797,7 @@ static struct ggml_cgraph * encodec_build_graph(
     return gf;
 }
 
-bool encodec_model_eval(
+bool encodec_reconstruct_audio(
                    encodec_context & ectx,
                 std::vector<float> & raw_audio,
                                int   n_threads) {
@@ -855,18 +858,20 @@ bool encodec_model_eval(
     return true;
 }
 
-struct encodec_context encodec_new_context_with_model(encodec_model & model) {
-    encodec_context ctx = encodec_context(model);
-    return ctx;
-}
+std::shared_ptr<encodec_context> encodec_load_model(const std::string & model_path) {
+    int64_t t_start_load_us = ggml_time_us();
 
-struct encodec_model encodec_load_model_from_file(std::string fname) {
-    encodec_model model;
-    if (!encodec_model_load(fname, model)) {
-        fprintf(stderr, "%s: failed to load model\n", __func__);
-        exit(0);
+    encodec_context ectx;
+
+    ectx.model = std::make_unique<encodec_model>();
+    if (!encodec_load_model_weights(model_path, *ectx.model)) {
+        fprintf(stderr, "%s: failed to load model weights from '%s'\n", __func__, model_path.c_str());
+        return {};
     }
-    return model;
+
+    ectx.t_load_us = ggml_time_us() - t_start_load_us;
+
+    return std::make_unique<encodec_context>(std::move(ectx));
 }
 
 void encodec_free(encodec_context & ectx) {

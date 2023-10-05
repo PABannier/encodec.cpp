@@ -37,4 +37,4 @@ endif()
 
 target_link_libraries(${ENCODEC_LIB} PUBLIC ggml)
 target_include_directories(${ENCODEC_LIB} PUBLIC .)
-target_compile_features(${ENCODEC_LIB} PUBLIC cxx_std_11)
+target_compile_features(${ENCODEC_LIB} PUBLIC cxx_std_14)
