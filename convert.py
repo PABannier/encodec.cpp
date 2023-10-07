@@ -26,7 +26,8 @@ Usage
 ```bash
     python convert.py \
         --dir-model ./ggml_weights/ \
-        --out-dir ./ggml_weights/
+        --out-dir ./ggml_weights/ \
+        --use-f16
 ```
 """
 import argparse
@@ -39,9 +40,10 @@ import torch
 parser = argparse.ArgumentParser()
 parser.add_argument("--dir-model", type=str, required=True)
 parser.add_argument("--out-dir", type=str, required=True)
+parser.add_argument("--use-f16", type=bool, default=True)
 
 
-def parse_codec_model(checkpoint, out_dir):
+def parse_codec_model(checkpoint, out_dir, use_f16):
     """Load encodec model checkpoint."""
     outfile = open(out_dir, "wb")
     outfile.write(struct.pack("i", 0x67676d6c))  # ggml magic
@@ -78,14 +80,23 @@ def parse_codec_model(checkpoint, out_dir):
 
         print(f"Processing variable: {name} with shape: {var_data.shape}")
 
-        if var_data.dtype != np.float32:
+        if use_f16:
+            if "weight" in name:
+                print("  Converting to float16")
+                var_data = var_data.astype(np.float16)
+                ftype_cur = 1
+            else:
+                print("  Converting to float32")
+                var_data = var_data.astype(np.float32)
+                ftype_cur = 0
+        else:
             print("  Converting to float32")
             var_data = var_data.astype(np.float32)
+            ftype_cur = 0
 
         n_dims = len(var_data.shape)
         encoded_name = name.encode("utf-8")
-        ftype = 0  # float32
-        outfile.write(struct.pack("iii", n_dims, len(encoded_name), ftype))
+        outfile.write(struct.pack("iii", n_dims, len(encoded_name), ftype_cur))
 
         for i in range(n_dims):
             outfile.write(struct.pack("i", var_data.shape[n_dims - 1 - i]))
@@ -107,6 +118,6 @@ if __name__ == "__main__":
     outfile = Path(out_dir / "ggml-model.bin")
 
     checkpoint = torch.load(dir_model / "encodec_24khz-d7cc33bc.th", map_location="cpu")
-    parse_codec_model(checkpoint, outfile)
+    parse_codec_model(checkpoint, outfile, args.use_f16)
 
     print("Done.")

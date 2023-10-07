@@ -18,7 +18,7 @@ struct encodec_params {
     std::string model_path = "/Users/pbannier/Documents/encodec.cpp/ggml_weights/ggml-model.bin";
 
     // input location
-    std::string original_audio_path = "/Users/pbannier/Documents/encodec/test_24k.wav";
+    std::string original_audio_path = "/Users/pbannier/Documents/encodec/decomp_24khz_True.wav";
 
     // output location
     std::string dest_wav_path = "output.wav";

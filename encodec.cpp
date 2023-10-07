@@ -152,10 +152,10 @@ static struct ggml_tensor * forward_pass_lstm_unilayer(
     struct ggml_tensor * c_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim);
     struct ggml_tensor * h_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim);
 
-    if (is_measure) {
-        h_t = ggml_set_zero(h_t);
-        c_t = ggml_set_zero(c_t);
-    }
+    // if (!is_measure) {
+    //     h_t = ggml_set_zero(h_t);
+    //     c_t = ggml_set_zero(c_t);
+    // }
 
     struct ggml_tensor * current = ggml_cont(ctx0, ggml_transpose(ctx0, inp));
 
@@ -697,7 +697,9 @@ static struct ggml_cgraph * encodec_build_graph(
         const int n_q        = codes->ne[1];
 
         quantized_out = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
-        quantized_out = ggml_set_zero(quantized_out);
+        // if (!ggml_allocr_is_measure(ectx.allocr)) {
+        //     quantized_out = ggml_set_zero(quantized_out);
+        // }
 
         for (int i = 0; i < n_q; i++) {
             encodec_quant_block block = model.quantizer.blocks[i];
@@ -818,7 +820,7 @@ bool encodec_reconstruct_audio(
 
     ectx.ctx_audio = ggml_init(ggml_params);
 
-    ectx.reconstructed_audio = ggml_new_tensor_1d(ectx.ctx_audio, GGML_TYPE_F32, raw_audio.size());
+    ectx.reconstructed_audio = ggml_new_tensor_1d(ectx.ctx_audio, GGML_TYPE_F32, 100160);
 
     // reconstruct the audio
     ectx.buf_compute.resize(ggml_tensor_overhead()*GGML_MAX_NODES + ggml_graph_overhead());
