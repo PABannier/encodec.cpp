@@ -45,6 +45,8 @@ parser.add_argument("--use-f16", action="store_true")
 
 def parse_codec_model(checkpoint, outfile, use_f16):
     """Load encodec model checkpoint."""
+    n_f16, n_f32 = 0, 0
+
     for name in checkpoint.keys():
         if "weight_g" in name:
             # the tensor has already been parsed with the corresponding "weight_v"
@@ -78,18 +80,21 @@ def parse_codec_model(checkpoint, outfile, use_f16):
         print(f"Processing variable: {name} with shape: {var_data.shape}")
 
         if use_f16:
-            if "weight" in name:
+            if "weight" in name or "embed" in name:
                 print("  Converting to float16")
                 var_data = var_data.astype(np.float16)
                 ftype_cur = 1
+                n_f16 += 1
             else:
                 print("  Converting to float32")
                 var_data = var_data.astype(np.float32)
                 ftype_cur = 0
+                n_f32 += 1
         else:
             print("  Converting to float32")
             var_data = var_data.astype(np.float32)
             ftype_cur = 0
+            n_f32 += 1
 
         n_dims = len(var_data.shape)
         encoded_name = name.encode("utf-8")
@@ -102,6 +107,10 @@ def parse_codec_model(checkpoint, outfile, use_f16):
         var_data.tofile(outfile)
 
     outfile.close()
+
+    print("\n")
+    print(f"n_f16: {n_f16} ({n_f16/(n_f16 + n_f32)*100:.0f}%)")
+    print(f"n_f32: {n_f32} ({n_f32/(n_f16 + n_f32)*100:.0f}%)")
 
 
 def parse_hparams(outfile, use_f16):
