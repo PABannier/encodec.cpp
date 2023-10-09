@@ -230,6 +230,45 @@ bool encodec_load_model_weights(const std::string& fname, encodec_model& model) 
         }
     }
 
+    // load hparams
+    {
+        auto & hparams = model.hparams;
+
+        read_safe(infile, hparams.in_channels);
+        read_safe(infile, hparams.hidden_dim);
+        read_safe(infile, hparams.n_filters);
+        read_safe(infile, hparams.kernel_size);
+        read_safe(infile, hparams.residual_kernel_size);
+        // read_safe(infile, hparams.ratios);
+        read_safe(infile, hparams.n_q);
+        read_safe(infile, hparams.n_bins);
+        read_safe(infile, hparams.ftype);
+
+        const int32_t qntvr = hparams.ftype / GGML_QNT_VERSION_FACTOR;
+
+        printf("%s: in_channels = %d\n", __func__, hparams.in_channels);
+        printf("%s: hidden_dim  = %d\n", __func__, hparams.hidden_dim);
+        printf("%s: n_filters   = %d\n", __func__, hparams.n_filters);
+        printf("%s: kernel_size = %d\n", __func__, hparams.kernel_size);
+        printf("%s: res_kernel  = %d\n", __func__, hparams.residual_kernel_size);
+        // printf("%s: ratios      = %d\n", __func__, hparams.ratios);
+        printf("%s: n_q         = %d\n", __func__, hparams.n_q);
+        printf("%s: n_bins      = %d\n", __func__, hparams.n_bins);
+        printf("%s: ftype       = %d\n", __func__, hparams.ftype);
+        printf("%s: qntvr       = %d\n", __func__, qntvr);
+
+        hparams.ftype %= GGML_QNT_VERSION_FACTOR;
+    }
+
+    // for the big tensors, we have the option to store the data in 16-bit floats or quantized
+    // in order to save memory and also to speed up the computation
+    ggml_type wtype = ggml_ftype_to_ggml_type((ggml_ftype) (model.hparams.ftype));
+    if (wtype == GGML_TYPE_COUNT) {
+        fprintf(stderr, "%s: invalid model file '%s' (bad ftype value %d)\n",
+                __func__, fname.c_str(), model.hparams.ftype);
+        return 1;
+    }
+
     auto & ctx = model.ctx;
     size_t ctx_size = 0;
 
@@ -241,38 +280,55 @@ bool encodec_load_model_weights(const std::string& fname, encodec_model& model) 
         const int hidden_dim    = hparams.hidden_dim;
         const int n_filters     = hparams.n_filters;
         const int kernel_size   = hparams.kernel_size;
+        const int res_kernel_sz = hparams.residual_kernel_size;
         const int n_q           = hparams.n_q;
+        const int n_bins        = hparams.n_bins;
         const int *ratios       = hparams.ratios;
+        const int n_lstm_layers = hparams.n_lstm_layers;
 
         // encoder
         {
+            int mult = 1;  // scaling factor for hidden size
+
             // initial conv1d layer
-            ctx_size += in_channels*n_filters*kernel_size*ggml_type_size(GGML_TYPE_F32);  // weight
-            ctx_size +=                         n_filters*ggml_type_size(GGML_TYPE_F32);  //bias
+            ctx_size += in_channels * n_filters * kernel_size * ggml_type_size(wtype);  // weight
+            ctx_size += n_filters * ggml_type_size(GGML_TYPE_F32);                      // bias
 
             // resnet blocks
-            ctx_size +=                  3*4*16*n_filters*ggml_type_size(GGML_TYPE_F32);  // upper bound on w_g, w_v and bias
+            for (int i = 0; i < 4; i++) {
+                // conv1
+                ctx_size += res_kernel_sz * (mult*n_filters) * (mult*n_filters/2) * ggml_type_size(wtype); // weight
+                ctx_size += (mult*n_filters/2) * ggml_type_size(GGML_TYPE_F32);                            // bias
 
-            //downsampling blocks
-            ctx_size += 3*4*16*n_filters*16*n_filters*2*ratios[0]*2*ggml_type_size(GGML_TYPE_F32);  // upper bound on w_g, w_v and bias
+                // conv2
+                ctx_size += (mult*n_filters/2) * (mult*n_filters) * ggml_type_size(wtype); // weight
+                ctx_size += (mult*n_filters) * ggml_type_size(GGML_TYPE_F32);              // bias
+
+                // shortcut
+                ctx_size += (mult*n_filters) * (mult*n_filters) * ggml_type_size(wtype); // weight
+                ctx_size += (mult*n_filters) * ggml_type_size(GGML_TYPE_F32);            // bias
+
+                // downsampling layers
+                ctx_size += (2*ratios[3-i]) * (mult*n_filters) * (mult*n_filters*2) * ggml_type_size(wtype); // weight
+                ctx_size += (2*mult*n_filters) * ggml_type_size(GGML_TYPE_F32);                              // bias
+
+                mult *= 2;
+            }
 
             // lstm
-            ctx_size +=             2*16*n_filters*16*n_filters*2*2*ggml_type_size(GGML_TYPE_F32); // weights
-            ctx_size +=                          4*16*n_filters*2*2*ggml_type_size(GGML_TYPE_F32); // bias
+            ctx_size += 2 * n_lstm_layers * (mult*n_filters) * (4*mult*n_filters) * ggml_type_size(wtype); // weight_ih and weight_hh
+            ctx_size += 2 * n_lstm_layers * (4*mult*n_filters) * ggml_type_size(GGML_TYPE_F32);            // bias_ih and bias_hh
 
             // final conv
-            ctx_size +=       3*16*n_filters*hidden_dim*kernel_size*ggml_type_size(GGML_TYPE_F32); // upper bound on w_g, w_v and bias
+            ctx_size += kernel_size * (mult*n_filters) * hidden_dim * ggml_type_size(wtype); // weight
+            ctx_size += hidden_dim * ggml_type_size(GGML_TYPE_F32);                          // bias
         }
 
-        // decoder mirrors the encoder (same number of parameter), just double context size
+        // decoder mirrors the encoder (same number of parameters), just double context size
         ctx_size *= 2;
 
         // quantizer
-        {
-            ctx_size +=                   n_q; // inited
-            ctx_size +=              n_q*1024; // cluster_size
-            ctx_size += 2*n_q*hidden_dim*1024; // embed and embed_avg
-        }
+        ctx_size += hidden_dim * n_bins * ggml_type_size(wtype);  // embed
 
         ctx_size += 10ull*MB;  // object overhead
     }
@@ -376,10 +432,10 @@ bool encodec_load_model_weights(const std::string& fname, encodec_model& model) 
 
             // final conv
             model.encoder.final_conv_w = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, kernel_size, mult*n_filters, hidden_dim);
-            model.encoder.final_conv_b   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, hidden_dim);
+            model.encoder.final_conv_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, hidden_dim);
 
             model.tensors["encoder.model.15.conv.conv.weight"] = model.encoder.final_conv_w;
-            model.tensors["encoder.model.15.conv.conv.bias"]     = model.encoder.final_conv_b;
+            model.tensors["encoder.model.15.conv.conv.bias"]   = model.encoder.final_conv_b;
         }
 
         // decoder
@@ -463,9 +519,9 @@ bool encodec_load_model_weights(const std::string& fname, encodec_model& model) 
             model.quantizer.blocks.resize(n_q);
 
             for (int i = 0; i < n_q; i++) {
-                model.quantizer.blocks[i].embed        = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hidden_dim, n_bins);
+                model.quantizer.blocks[i].embed = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hidden_dim, n_bins);
 
-                model.tensors["quantizer.vq.layers." + std::to_string(i) + "._codebook.embed"]        = model.quantizer.blocks[i].embed;
+                model.tensors["quantizer.vq.layers." + std::to_string(i) + "._codebook.embed"] = model.quantizer.blocks[i].embed;
             }
         }
 

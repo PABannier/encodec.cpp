@@ -5,7 +5,7 @@
 #include <iostream>
 #include <map>
 #include <thread>
-#include <string> 
+#include <string>
 #include <vector>
 
 #include "ggml.h"
@@ -16,21 +16,33 @@
 static const size_t MB = 1024*1024;
 
 struct encodec_hparams {
+    // The number of input channels is always 1 (mono).
     int32_t in_channels          = 1;
+    // The hidden dimension for the codebook.
     int32_t hidden_dim           = 128;
+    // The number of filters for the first convolution.
     int32_t n_filters            = 32;
+    // The filter size for upsampling and downsampling.
     int32_t ratios[4]            = {8, 5, 4, 2};
+    // The kernel size for the first convolution.
     int32_t kernel_size          = 7;
+    // The kernel size for the residual blocks.
     int32_t residual_kernel_size = 3;
+    // Compression
     int32_t compress             = 2;
+    // The number of layers in the LSTM modules.
     int32_t n_lstm_layers        = 2;
+    // The stride of the first convolution.
     int32_t stride               = 1;
 
-    // number of codebooks is determined by the bandwidth selected.
-    // Supported bandwidths are 1.5kbps (n_q = 2), 3 kbps (n_q = 4), 6 kbps (n_q = 8) and 12 kbps (n_q =16) and 24kbps (n_q=32).
-    int32_t n_q                  = 32;
-    int32_t n_bins               = 1024;
-    int32_t sr                   = 24000;
+    // The number of codebooks is determined by the bandwidth selected.
+    // Supported bandwidths are 1.5kbps (n_q = 2), 3 kbps (n_q = 4), 6 kbps (n_q = 8),
+    // 12 kbps (n_q = 16) and 24kbps (n_q = 32).
+    int32_t n_q    = 32;
+    int32_t n_bins = 1024;
+    int32_t sr     = 24000;
+
+    int32_t ftype;
 };
 
 // res + downsample block at some ratio
