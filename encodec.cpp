@@ -328,7 +328,7 @@ bool encodec_load_model_weights(const std::string& fname, encodec_model& model) 
         ctx_size *= 2;
 
         // quantizer
-        ctx_size += hidden_dim * n_bins * ggml_type_size(wtype);  // embed
+        ctx_size += n_q * hidden_dim * n_bins * ggml_type_size(GGML_TYPE_F32);  // embed
 
         ctx_size += 10ull*MB;  // object overhead
     }
@@ -519,7 +519,7 @@ bool encodec_load_model_weights(const std::string& fname, encodec_model& model) 
             model.quantizer.blocks.resize(n_q);
 
             for (int i = 0; i < n_q; i++) {
-                model.quantizer.blocks[i].embed = ggml_new_tensor_2d(ctx, wtype, hidden_dim, n_bins);
+                model.quantizer.blocks[i].embed = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hidden_dim, n_bins);
 
                 model.tensors["quantizer.vq.layers." + std::to_string(i) + "._codebook.embed"] = model.quantizer.blocks[i].embed;
             }

@@ -80,7 +80,12 @@ def parse_codec_model(checkpoint, outfile, use_f16):
         print(f"Processing variable: {name} with shape: {var_data.shape}")
 
         if use_f16:
-            if "weight" in name or "embed" in name:
+            if "embed" in name:
+                print("  Converting to float32")
+                var_data = var_data.astype(np.float32)
+                ftype_cur = 0
+                n_f32 += 1
+            elif "weight" in name:
                 print("  Converting to float16")
                 var_data = var_data.astype(np.float16)
                 ftype_cur = 1
