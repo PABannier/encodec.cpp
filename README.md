@@ -6,19 +6,15 @@ High-performance inference of [Meta's Encodec](https://github.com/facebookresear
 
 The entire implementation of the model is contained in 3 source files:
 
-Tensor operations: ggml.h / ggml.c
+Tensor operations: ggml.h / ggml.c<br/>
 Inference: encodec.h / encodec.cpp
-Utils operations: encoder.h / encoder.cpp
 
 ## Roadmap
 
 - [x] Support of 24Khz model
 - [ ] Support of 48Khz model
 - [ ] Encodec's language model support
-- [ ] Mixed F16 / F32 precision
-- [ ] 4-bit / 8-bit quantization support
-- [ ] Add Encodec's original language model
-- [ ] Support of 48khz model
+- [x] Mixed F16 / F32 precision
 
 
 ## Implementation details
@@ -27,4 +23,24 @@ Utils operations: encoder.h / encoder.cpp
 - The encoder-decoder architecture and the high-level C-style API are implemented in C++ ([encodec.h](encodec.h) / [encodec.cpp](encodec.cpp))
 - Sample usage is demonstrated in [main.cpp](examples/main)
 
-## Quick start
+## Usage
+
+Here are the steps for the bark model.
+
+### Get the code
+
+```bash
+git clone https://github.com/PABannier/encodec.cpp.git
+cd encodec.cpp
+```
+
+### Build
+
+In order to build encodec.cpp you must use `CMake`:
+
+```bash
+mkdir build
+cd build
+cmake ..
+cmake --build . --config Release
+```
