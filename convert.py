@@ -40,7 +40,7 @@ import torch
 parser = argparse.ArgumentParser()
 parser.add_argument("--dir-model", type=str, required=True)
 parser.add_argument("--out-dir", type=str, required=True)
-parser.add_argument("--use-f16", type=bool, default=True)
+parser.add_argument("--use-f16", action="store_true")
 
 
 def parse_codec_model(checkpoint, outfile, use_f16):
@@ -138,7 +138,7 @@ if __name__ == "__main__":
     checkpoint = torch.load(dir_model / "encodec_24khz-d7cc33bc.th", map_location="cpu")
 
     # Step 1: insert ggml magic
-    outfile = open(out_dir, "wb")
+    outfile = open(outfile, "wb")
     outfile.write(struct.pack("i", 0x67676d6c))
 
     # Step 2: insert hyperparameters
