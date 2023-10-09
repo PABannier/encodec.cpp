@@ -135,8 +135,7 @@ int main(int argc, char **argv) {
     }
 
     // write reconstructed audio on disk
-    std::vector<float> audio_arr(ectx->reconstructed_audio->ne[0]);
-    memcpy(ectx->reconstructed_audio->data, audio_arr.data(), audio_arr.size() * sizeof(float));
+    auto & audio_arr = ectx->out_audio;
     write_wav_on_disk(audio_arr, params.dest_wav_path);
 
     // report timing
