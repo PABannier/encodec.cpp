@@ -642,7 +642,7 @@ bool encodec_load_model_weights(const std::string& fname, encodec_model& model) 
             } else {
                 // read into a temporary buffer first, then copy to device memory
                 read_buf.resize(ggml_nbytes(tensor));
-                fin.read(read_buf.data(), ggml_nbytes(tensor));
+                infile.read(read_buf.data(), ggml_nbytes(tensor));
                 ggml_backend_tensor_set(tensor, read_buf.data(), 0, ggml_nbytes(tensor));
             }
 
@@ -948,7 +948,7 @@ bool encodec_eval(
     ggml_backend_graph_compute(model.backend, gf);
 
     // reconstructed audio is the last one in the graph
-    struct ggml_tensor * out = gf->nodes[gf->nodes - 1];
+    struct ggml_tensor * out = gf->nodes[gf->n_nodes - 1];
 
     auto & out_audio = ectx.out_audio;
     int out_length = out->ne[0];
@@ -1031,6 +1031,6 @@ void encodec_free(encodec_context & ectx) {
 
     if (ectx.model) {
         ggml_backend_buffer_free(ectx.model->buffer_w);
-        ggml_backend_buffer_free(ectx.model->backend);
+        ggml_backend_free(ectx.model->backend);
     }
 }

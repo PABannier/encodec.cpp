@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "ggml.h"
-#include "ggml_backend.h"
+#include "ggml-backend.h"
 
 #define ENCODEC_FILE_MAGIC   'ggml'
 
