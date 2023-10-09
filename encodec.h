@@ -9,9 +9,9 @@
 #include <vector>
 
 #include "ggml.h"
+#include "ggml_backend.h"
 
 #define ENCODEC_FILE_MAGIC   'ggml'
-#define ENCODEC_FILE_VERSION 1
 
 static const size_t MB = 1024*1024;
 
@@ -139,23 +139,23 @@ struct encodec_model {
     struct ggml_context * ctx;
     int n_loaded;
 
+    ggml_backend_t backend = NULL;
+
+    ggml_backend_buffer_t buffer_w;
+
     std::map<std::string, struct ggml_tensor *> tensors;
 };
 
 struct encodec_context {
     std::unique_ptr<encodec_model> model;
 
-    struct ggml_context * ctx_audio;
-    struct ggml_tensor  * reconstructed_audio;
-
-    // buffer for `ggml_graph_plan.work_data`
-    std::vector<uint8_t> work_buffer;
-
     // buffers to evaluate the model
-    std::vector<uint8_t> buf_alloc;
-    std::vector<uint8_t> buf_compute;
+    ggml_backend_buffer_t buf_compute;
 
-    struct ggml_allocr * allocr = {};
+    struct ggml_allocr * allocr = nullptr;
+
+    // output audio
+    std::vector<float> out_audio;
 
     // statistics
     int64_t t_load_us    = 0;
