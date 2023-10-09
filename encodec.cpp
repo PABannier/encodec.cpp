@@ -148,6 +148,7 @@ static struct ggml_tensor * forward_pass_lstm_unilayer(
     const int seq_length = inp->ne[0];
 
     struct ggml_tensor * hs = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
+    ggml_set_name(hs, "hs");
 
     struct ggml_tensor * c_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim);
     struct ggml_tensor * h_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim);
@@ -164,19 +165,32 @@ static struct ggml_tensor * forward_pass_lstm_unilayer(
 
         struct ggml_tensor * inp_gates = ggml_mul_mat(ctx0, weight_ih, x_t);
         inp_gates = ggml_add(ctx0, inp_gates, bias_ih);
+        ggml_set_name(inp_gates, "input_gates");
 
         struct ggml_tensor * hid_gates = ggml_mul_mat(ctx0, weight_hh, h_t);
         hid_gates = ggml_add(ctx0, hid_gates, bias_hh);
+        ggml_set_name(hid_gates, "hidden_gates");
 
         struct ggml_tensor * out_gates = ggml_add(ctx0, inp_gates, hid_gates);
+        ggml_set_name(out_gates, "output_gates");
 
         struct ggml_tensor * i_t = encodec_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 0*sizeof(float)*hidden_dim));
+        ggml_set_name(i_t, "i_t");
+
         struct ggml_tensor * f_t = encodec_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 1*sizeof(float)*hidden_dim));
+        ggml_set_name(f_t, "f_t");
+
         struct ggml_tensor * g_t = ggml_tanh      (ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 2*sizeof(float)*hidden_dim));
+        ggml_set_name(g_t, "g_t");
+
         struct ggml_tensor * o_t = encodec_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 3*sizeof(float)*hidden_dim));
+        ggml_set_name(o_t, "o_t");
 
         c_t = ggml_add(ctx0, ggml_mul(ctx0, f_t, c_t), ggml_mul(ctx0, i_t, g_t));
+        ggml_set_name(c_t, "c_t");
+
         h_t = ggml_mul(ctx0, o_t, ggml_tanh(ctx0, c_t));
+        ggml_set_name(h_t, "h_t");
 
         hs = ggml_set_1d(ctx0, hs, h_t, t*hs->nb[1]);
     }
@@ -614,6 +628,8 @@ static struct ggml_cgraph * encodec_build_graph(
     struct ggml_cgraph  * gf   = ggml_new_graph(ctx0);
 
     struct ggml_tensor * inp = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, audio_length);
+    ggml_set_name(inp, "input");
+
     ggml_allocr_alloc(ectx.allocr, inp);
     if (!ggml_allocr_is_measure(ectx.allocr)) {
         memcpy(inp->data, inp_audio.data(), audio_length*ggml_element_size(inp));
@@ -631,6 +647,7 @@ static struct ggml_cgraph * encodec_build_graph(
 
         struct ggml_tensor * inpL = strided_conv_1d(
             ctx0, inp, model.encoder.init_conv_w, model.encoder.init_conv_b, stride);
+        ggml_set_name(inpL, "out_init_conv");
 
         for (int layer_ix = 0; layer_ix < 4; layer_ix++) {
             encodec_encoder_block block = model.encoder.blocks[layer_ix];
@@ -666,6 +683,7 @@ static struct ggml_cgraph * encodec_build_graph(
         // lstm
         {
             struct ggml_tensor * cur = inpL;
+            ggml_set_name(cur, "input_lstm");
 
             const encodec_lstm lstm = model.encoder.lstm;
 
@@ -680,6 +698,8 @@ static struct ggml_cgraph * encodec_build_graph(
                 ggml_allocr_is_measure(ectx.allocr));
 
             inpL = ggml_add(ctx0, inpL, out);
+
+            ggml_set_name(inpL, "output_lstm");
         }
 
         // final conv
