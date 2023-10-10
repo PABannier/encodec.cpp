@@ -664,11 +664,14 @@ bool encodec_load_model_weights(const std::string& fname, encodec_model& model) 
 struct ggml_cgraph * encodec_build_graph(
                      encodec_context & ectx,
             const std::vector<float> & inp_audio) {
-    const int32_t audio_length = inp_audio.size();
+    const int N = inp_audio.size();
 
     const auto & model = *ectx.model;
 
-    // since we are using ggml-alloc, this buffer only needs enough space to hold the ggml_tensor and ggml_cgraph structs, but not the tensor data
+    auto & allocr = ectx.allocr;
+
+    // since we are using ggml-alloc, this buffer only needs enough space to hold the
+    // ggml_tensor and ggml_cgraph structs, but not the tensor data
     static size_t buf_size = ggml_tensor_overhead()*GGML_MAX_NODES + ggml_graph_overhead();
     static std::vector<uint8_t> buf(buf_size);
 
@@ -682,12 +685,12 @@ struct ggml_cgraph * encodec_build_graph(
 
     struct ggml_cgraph * gf = ggml_new_graph(ctx0);
 
-    struct ggml_tensor * inp = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, audio_length);
-    ggml_allocr_alloc(ectx.allocr, inp);
+    struct ggml_tensor * inp = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, N);
+    ggml_allocr_alloc(allocr, inp);
 
     // avoid writing to tensors if we are only measuring the memory usage
-    if (!ggml_allocr_is_measure(ectx.allocr)) {
-        ggml_backend_tensor_set(inp, inp_audio.data(), 0, audio_length*ggml_element_size(inp));
+    if (!ggml_allocr_is_measure(allocr)) {
+        ggml_backend_tensor_set(inp, inp_audio.data(), 0, N*ggml_element_size(inp));
     }
 
     // encoder
@@ -761,8 +764,6 @@ struct ggml_cgraph * encodec_build_graph(
                 ctx0, inpL, model.encoder.final_conv_w, model.encoder.final_conv_b, stride);
         }
     }
-
-    // print_tensor(encoded_inp);
 
     // quantizer (encode)
     struct ggml_tensor * codes;
@@ -951,9 +952,10 @@ bool encodec_eval(
     struct ggml_tensor * out = gf->nodes[gf->n_nodes - 1];
 
     auto & out_audio = ectx.out_audio;
-    int out_length = out->ne[0];
 
-    ectx.out_audio.resize(out_length);
+    int out_length = out->ne[0];
+    out_audio.resize(out_length);
+
     ggml_backend_tensor_get(out, out_audio.data(), 0, out_length*ggml_element_size(out));
 
     return true;
