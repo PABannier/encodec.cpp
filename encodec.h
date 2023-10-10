@@ -9,9 +9,9 @@
 #include <vector>
 
 #include "ggml.h"
+#include "ggml-backend.h"
 
 #define ENCODEC_FILE_MAGIC   'ggml'
-#define ENCODEC_FILE_VERSION 1
 
 static const size_t MB = 1024*1024;
 
@@ -139,34 +139,35 @@ struct encodec_model {
     struct ggml_context * ctx;
     int n_loaded;
 
+    ggml_backend_t backend = NULL;
+
+    ggml_backend_buffer_t buffer_w;
+
     std::map<std::string, struct ggml_tensor *> tensors;
 };
 
 struct encodec_context {
-    std::unique_ptr<encodec_model> model;
+    encodec_model model;
 
-    struct ggml_context * ctx_audio;
-    struct ggml_tensor  * reconstructed_audio;
+    // buffer for model evaluation
+    ggml_backend_buffer_t buf_compute;
 
-    // buffer for `ggml_graph_plan.work_data`
-    std::vector<uint8_t> work_buffer;
+    // custom allocrator
+    struct ggml_allocr * allocr = NULL;
 
-    // buffers to evaluate the model
-    std::vector<uint8_t> buf_alloc;
-    std::vector<uint8_t> buf_compute;
-
-    struct ggml_allocr * allocr = {};
+    // output audio
+    std::vector<float> out_audio;
 
     // statistics
     int64_t t_load_us    = 0;
     int64_t t_compute_ms = 0;
 };
 
-std::shared_ptr<encodec_context> encodec_load_model(const std::string & model_path);
+struct encodec_context * encodec_load_model(const std::string & model_path);
 
 bool encodec_reconstruct_audio(
-                   encodec_context & ectx,
+            struct encodec_context * ectx,
                 std::vector<float> & raw_audio,
                                int   n_threads);
 
-void encodec_free(encodec_context & ectx);
+void encodec_free(struct encodec_context * ectx);

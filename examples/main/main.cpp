@@ -77,7 +77,7 @@ bool read_wav_from_disk(std::string in_path, std::vector<float>& audio_arr) {
         return false;
     }
 
-    fprintf(stderr, "%s: Number of frames read = %lld.\n", __func__, total_frame_count);
+    fprintf(stderr, "\n%s: Number of frames read = %lld.\n", __func__, total_frame_count);
 
     audio_arr.resize(total_frame_count);
     memcpy(audio_arr.data(), raw_audio, total_frame_count * sizeof(float));
@@ -115,7 +115,7 @@ int main(int argc, char **argv) {
     }
 
     // initialize encodec context
-    std::shared_ptr<encodec_context> ectx = encodec_load_model(params.model_path);
+    struct encodec_context * ectx = encodec_load_model(params.model_path);
     if (!ectx) {
         printf("%s: error during loading model\n", __func__);
         return 1;
@@ -128,15 +128,16 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    printf("\n");
+
     // reconstruct audio
-    if (!encodec_reconstruct_audio(*ectx, original_audio_arr, params.n_threads)) {
+    if (!encodec_reconstruct_audio(ectx, original_audio_arr, params.n_threads)) {
         printf("%s: error during inference\n", __func__);
         return 1;
     }
 
     // write reconstructed audio on disk
-    std::vector<float> audio_arr(ectx->reconstructed_audio->ne[0]);
-    memcpy(ectx->reconstructed_audio->data, audio_arr.data(), audio_arr.size() * sizeof(float));
+    auto & audio_arr = ectx->out_audio;
     write_wav_on_disk(audio_arr, params.dest_wav_path);
 
     // report timing
@@ -149,7 +150,7 @@ int main(int argc, char **argv) {
         printf("%s:    total time = %8.2f ms\n", __func__, (t_main_end_us - t_main_start_us)/1000.0f);
     }
 
-    encodec_free(*ectx);
+    encodec_free(ectx);
 
     return 0;
 }
