@@ -680,7 +680,7 @@ struct ggml_cgraph * encodec_build_graph(
 
     struct ggml_context * ctx0 = ggml_init(ggml_params);
 
-    struct ggml_cgraph  * gf   = ggml_new_graph(ctx0);
+    struct ggml_cgraph * gf = ggml_new_graph(ctx0);
 
     struct ggml_tensor * inp = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, audio_length);
     ggml_allocr_alloc(ectx.allocr, inp);
@@ -762,7 +762,7 @@ struct ggml_cgraph * encodec_build_graph(
         }
     }
 
-    print_tensor(encoded_inp);
+    // print_tensor(encoded_inp);
 
     // quantizer (encode)
     struct ggml_tensor * codes;

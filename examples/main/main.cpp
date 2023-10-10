@@ -77,7 +77,7 @@ bool read_wav_from_disk(std::string in_path, std::vector<float>& audio_arr) {
         return false;
     }
 
-    fprintf(stderr, "%s: Number of frames read = %lld.\n", __func__, total_frame_count);
+    fprintf(stderr, "\n%s: Number of frames read = %lld.\n", __func__, total_frame_count);
 
     audio_arr.resize(total_frame_count);
     memcpy(audio_arr.data(), raw_audio, total_frame_count * sizeof(float));
@@ -127,6 +127,8 @@ int main(int argc, char **argv) {
         printf("%s: error during reading wav file\n", __func__);
         return 1;
     }
+
+    printf("\n");
 
     // reconstruct audio
     if (!encodec_reconstruct_audio(*ectx, original_audio_arr, params.n_threads)) {
