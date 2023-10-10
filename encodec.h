@@ -147,12 +147,13 @@ struct encodec_model {
 };
 
 struct encodec_context {
-    std::unique_ptr<encodec_model> model;
+    encodec_model model;
 
-    // buffers to evaluate the model
+    // buffer for model evaluation
     ggml_backend_buffer_t buf_compute;
 
-    struct ggml_allocr * allocr = nullptr;
+    // custom allocrator
+    struct ggml_allocr * allocr = NULL;
 
     // output audio
     std::vector<float> out_audio;
@@ -162,11 +163,11 @@ struct encodec_context {
     int64_t t_compute_ms = 0;
 };
 
-std::shared_ptr<encodec_context> encodec_load_model(const std::string & model_path);
+struct encodec_context * encodec_load_model(const std::string & model_path);
 
 bool encodec_reconstruct_audio(
-                   encodec_context & ectx,
+            struct encodec_context * ectx,
                 std::vector<float> & raw_audio,
                                int   n_threads);
 
-void encodec_free(encodec_context & ectx);
+void encodec_free(struct encodec_context * ectx);

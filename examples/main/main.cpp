@@ -115,7 +115,7 @@ int main(int argc, char **argv) {
     }
 
     // initialize encodec context
-    std::shared_ptr<encodec_context> ectx = encodec_load_model(params.model_path);
+    struct encodec_context * ectx = encodec_load_model(params.model_path);
     if (!ectx) {
         printf("%s: error during loading model\n", __func__);
         return 1;
@@ -131,7 +131,7 @@ int main(int argc, char **argv) {
     printf("\n");
 
     // reconstruct audio
-    if (!encodec_reconstruct_audio(*ectx, original_audio_arr, params.n_threads)) {
+    if (!encodec_reconstruct_audio(ectx, original_audio_arr, params.n_threads)) {
         printf("%s: error during inference\n", __func__);
         return 1;
     }
@@ -150,7 +150,7 @@ int main(int argc, char **argv) {
         printf("%s:    total time = %8.2f ms\n", __func__, (t_main_end_us - t_main_start_us)/1000.0f);
     }
 
-    encodec_free(*ectx);
+    encodec_free(ectx);
 
     return 0;
 }

@@ -165,8 +165,7 @@ static struct ggml_tensor * forward_pass_lstm_unilayer(
              struct ggml_tensor * weight_ih,
              struct ggml_tensor * weight_hh,
              struct ggml_tensor * bias_ih,
-             struct ggml_tensor * bias_hh,
-                           bool   is_measure) {
+             struct ggml_tensor * bias_hh) {
 
     const int input_dim  = inp->ne[1];
     const int hidden_dim = weight_ih->ne[1]/4;
@@ -176,11 +175,6 @@ static struct ggml_tensor * forward_pass_lstm_unilayer(
 
     struct ggml_tensor * c_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim);
     struct ggml_tensor * h_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim);
-
-    // if (!is_measure) {
-    //     h_t = ggml_set_zero(h_t);
-    //     c_t = ggml_set_zero(c_t);
-    // }
 
     struct ggml_tensor * current = ggml_cont(ctx0, ggml_transpose(ctx0, inp));
 
@@ -661,14 +655,14 @@ bool encodec_load_model_weights(const std::string& fname, encodec_model& model) 
     return true;
 }
 
-struct ggml_cgraph * encodec_build_graph(
-                     encodec_context & ectx,
+struct ggml_cgraph * encodec_graph(
+              struct encodec_context * ectx,
             const std::vector<float> & inp_audio) {
     const int N = inp_audio.size();
 
-    const auto & model = *ectx.model;
+    const auto & model = ectx->model;
 
-    auto & allocr = ectx.allocr;
+    auto & allocr = ectx->allocr;
 
     // since we are using ggml-alloc, this buffer only needs enough space to hold the
     // ggml_tensor and ggml_cgraph structs, but not the tensor data
@@ -745,13 +739,11 @@ struct ggml_cgraph * encodec_build_graph(
 
             // first lstm layer
             struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(
-                ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b,
-                ggml_allocr_is_measure(ectx.allocr));
+                ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
 
             // second lstm layer
             struct ggml_tensor * out = forward_pass_lstm_unilayer(
-                ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b,
-                ggml_allocr_is_measure(ectx.allocr));
+                ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
 
             inpL = ggml_add(ctx0, inpL, out);
         }
@@ -866,13 +858,11 @@ struct ggml_cgraph * encodec_build_graph(
 
             // first lstm layer
             struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(
-                ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b,
-                ggml_allocr_is_measure(ectx.allocr));
+                ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
 
             // second lstm layer
             struct ggml_tensor * out = forward_pass_lstm_unilayer(
-                ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b,
-                ggml_allocr_is_measure(ectx.allocr));
+                ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
 
             inpL = ggml_add(ctx0, inpL, out);
         }
@@ -927,17 +917,16 @@ struct ggml_cgraph * encodec_build_graph(
 }
 
 bool encodec_eval(
-        encodec_context & ectx,
-     std::vector<float> & raw_audio,
-              const int   n_threads) {
-    auto & model = *ectx.model;
-
-    auto & allocr = ectx.allocr;
+        struct encodec_context * ectx,
+            std::vector<float> & raw_audio,
+                     const int   n_threads) {
+    auto & model  = ectx->model;
+    auto & allocr = ectx->allocr;
 
     // reset the allocator to free all the memory allocated during the previous inference
     ggml_allocr_reset(allocr);
 
-    struct ggml_cgraph * gf = encodec_build_graph(ectx, raw_audio);
+    struct ggml_cgraph * gf = encodec_graph(ectx, raw_audio);
 
     // allocate tensors
     ggml_allocr_alloc_graph(allocr, gf);
@@ -951,7 +940,7 @@ bool encodec_eval(
     // reconstructed audio is the last one in the graph
     struct ggml_tensor * out = gf->nodes[gf->n_nodes - 1];
 
-    auto & out_audio = ectx.out_audio;
+    auto & out_audio = ectx->out_audio;
 
     int out_length = out->ne[0];
     out_audio.resize(out_length);
@@ -962,33 +951,27 @@ bool encodec_eval(
 }
 
 bool encodec_reconstruct_audio(
-                   encodec_context & ectx,
+            struct encodec_context * ectx,
                 std::vector<float> & raw_audio,
                                int   n_threads) {
     const int64_t t_start_ms = ggml_time_ms();
 
-    auto & allocr = ectx.allocr;
-
-    auto & buf_compute = ectx.buf_compute;
-
-    auto & model = *ectx.model;
-
     // allocate the compute buffer
     {
         // alignment required by the backend
-        size_t align = ggml_backend_get_alignment(model.backend);
-        allocr = ggml_allocr_new_measure(align);
+        size_t align = ggml_backend_get_alignment(ectx->model.backend);
+        ectx->allocr = ggml_allocr_new_measure(align);
 
         // create the graph for memory usage estimation
-        struct ggml_cgraph * gf = encodec_build_graph(ectx, raw_audio);
+        struct ggml_cgraph * gf = encodec_graph(ectx, raw_audio);
 
         // compute the required memory
-        size_t mem_size = ggml_allocr_alloc_graph(allocr, gf);
+        size_t mem_size = ggml_allocr_alloc_graph(ectx->allocr, gf);
 
         // recreate the allocator with the required memory
-        ggml_allocr_free(allocr);
-        buf_compute = ggml_backend_alloc_buffer(model.backend, mem_size);
-        allocr = ggml_allocr_new_from_buffer(buf_compute);
+        ggml_allocr_free(ectx->allocr);
+        ectx->buf_compute = ggml_backend_alloc_buffer(ectx->model.backend, mem_size);
+        ectx->allocr = ggml_allocr_new_from_buffer(ectx->buf_compute);
 
         fprintf(stderr, "%s: compute buffer size: %.2f MB\n", __func__, mem_size/1024.0/1024.0);
     }
@@ -1001,38 +984,42 @@ bool encodec_reconstruct_audio(
         return false;
     }
 
-    ectx.t_compute_ms = ggml_time_ms() - t_start_ms;
+    ectx->t_compute_ms = ggml_time_ms() - t_start_ms;
 
     return true;
 }
 
-std::shared_ptr<encodec_context> encodec_load_model(const std::string & model_path) {
+struct encodec_context * encodec_load_model(const std::string & model_path) {
     int64_t t_start_load_us = ggml_time_us();
 
-    encodec_context ectx;
+    struct encodec_context * ectx = new encodec_context();
 
-    ectx.model = std::make_unique<encodec_model>();
-    if (!encodec_load_model_weights(model_path, *ectx.model)) {
+    ectx->model = encodec_model();
+    if (!encodec_load_model_weights(model_path, ectx->model)) {
         fprintf(stderr, "%s: failed to load model weights from '%s'\n", __func__, model_path.c_str());
         return {};
     }
 
-    ectx.t_load_us = ggml_time_us() - t_start_load_us;
+    ectx->t_load_us = ggml_time_us() - t_start_load_us;
 
-    return std::make_unique<encodec_context>(std::move(ectx));
+    return ectx;
 }
 
-void encodec_free(encodec_context & ectx) {
-    if (ectx.model && ectx.model->ctx) {
-        ggml_free(ectx.model->ctx);
+void encodec_free(struct encodec_context * ectx) {
+    if (!ectx) {
+        return;
     }
 
-    if (ectx.buf_compute) {
-        ggml_backend_buffer_free(ectx.buf_compute);
+    if (ectx->model.ctx) {
+        ggml_free(ectx->model.ctx);
     }
 
-    if (ectx.model) {
-        ggml_backend_buffer_free(ectx.model->buffer_w);
-        ggml_backend_free(ectx.model->backend);
+    if (ectx->buf_compute) {
+        ggml_backend_buffer_free(ectx->buf_compute);
     }
+
+    ggml_backend_buffer_free(ectx->model.buffer_w);
+    ggml_backend_free(ectx->model.backend);
+
+    delete ectx;
 }
