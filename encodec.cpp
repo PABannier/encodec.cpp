@@ -15,6 +15,7 @@
 
 
 void print_tensor(struct ggml_tensor * a) {
+    float sum = 0;
     if (a) {
         for (int i = 0; i < a->ne[3]; i++) {
             for (int j = 0; j < a->ne[2]; j++) {
@@ -23,10 +24,12 @@ void print_tensor(struct ggml_tensor * a) {
                         if (a->type == GGML_TYPE_F32) {
                             float * aval = (float *) (
                                 (char *) a->data + i*a->nb[3] + j*a->nb[2] + k*a->nb[1] + l*a->nb[0]);
+                            sum += *aval;
                             printf("%.4f ", *aval);
                         } else if (a->type == GGML_TYPE_I32) {
                             int32_t * aval = (int32_t *) (
                                 (char *) a->data + i*a->nb[3] + j*a->nb[2] + k*a->nb[1] + l*a->nb[0]);
+                            sum += (float) *aval;
                             printf("%d ", *aval);
                         } else {
                             throw;
@@ -37,6 +40,8 @@ void print_tensor(struct ggml_tensor * a) {
                 printf("\n\n");
             }
         }
+        printf("sum=%.2f\n", sum);
+        printf("shape=[%d,%d,%d,%d]\n", a->ne[0], a->ne[1], a->ne[2], a->ne[3]);
     }
 }
 
@@ -161,6 +166,7 @@ static struct ggml_tensor * strided_conv_1d(
 
 static struct ggml_tensor * forward_pass_lstm_unilayer(
             struct ggml_context * ctx0,
+             struct ggml_allocr * allocr,
              struct ggml_tensor * inp,
              struct ggml_tensor * weight_ih,
              struct ggml_tensor * weight_hh,
@@ -172,9 +178,18 @@ static struct ggml_tensor * forward_pass_lstm_unilayer(
     const int seq_length = inp->ne[0];
 
     struct ggml_tensor * hs = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
+    ggml_allocr_alloc(allocr, hs);
 
     struct ggml_tensor * c_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim);
+    ggml_allocr_alloc(allocr, c_t);
+
     struct ggml_tensor * h_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim);
+    ggml_allocr_alloc(allocr, h_t);
+
+    if (!ggml_allocr_is_measure(allocr)) {
+        h_t = ggml_set_zero(h_t);
+        c_t = ggml_set_zero(c_t);
+    }
 
     struct ggml_tensor * current = ggml_cont(ctx0, ggml_transpose(ctx0, inp));
 
@@ -689,6 +704,7 @@ struct ggml_cgraph * encodec_graph(
 
     // encoder
     struct ggml_tensor * encoded_inp;
+    struct ggml_tensor * bp;
     {
         const auto & hparams = model.hparams;
 
@@ -739,177 +755,179 @@ struct ggml_cgraph * encodec_graph(
 
             // first lstm layer
             struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(
-                ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
+                ctx0, allocr, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
 
             // second lstm layer
             struct ggml_tensor * out = forward_pass_lstm_unilayer(
-                ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
+                ctx0, allocr, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
 
             inpL = ggml_add(ctx0, inpL, out);
         }
 
-        // final conv
-        {
-            inpL = ggml_elu(ctx0, inpL);
+        bp = inpL;
 
-            encoded_inp = strided_conv_1d(
-                ctx0, inpL, model.encoder.final_conv_w, model.encoder.final_conv_b, stride);
-        }
+        // // final conv
+        // {
+        //     inpL = ggml_elu(ctx0, inpL);
+
+        //     encoded_inp = strided_conv_1d(
+        //         ctx0, inpL, model.encoder.final_conv_w, model.encoder.final_conv_b, stride);
+        // }
     }
 
     // quantizer (encode)
-    struct ggml_tensor * codes;
-    {
-        const auto & hparams = model.hparams;
-        // originally, n_q = n_q or len(self.layers)
-        // for this model, n_q is at most 32, but the implementation we are comparing
-        // our model against has only 16, hence we hardcode 16 as n_q for now.
-        // const int n_q = hparams.n_q;
-        const int n_q = 16;
+    // struct ggml_tensor * codes;
+    // {
+    //     const auto & hparams = model.hparams;
+    //     // originally, n_q = n_q or len(self.layers)
+    //     // for this model, n_q is at most 32, but the implementation we are comparing
+    //     // our model against has only 16, hence we hardcode 16 as n_q for now.
+    //     // const int n_q = hparams.n_q;
+    //     const int n_q = 16;
 
-        const int seq_length = encoded_inp->ne[0];
-        codes = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, seq_length, n_q);
+    //     const int seq_length = encoded_inp->ne[0];
+    //     codes = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, seq_length, n_q);
 
-        struct ggml_tensor * inpL = ggml_cont(ctx0, ggml_transpose(ctx0, encoded_inp));
-        struct ggml_tensor * residual = inpL;
-        struct ggml_tensor * indices;
+    //     struct ggml_tensor * inpL = ggml_cont(ctx0, ggml_transpose(ctx0, encoded_inp));
+    //     struct ggml_tensor * residual = inpL;
+    //     struct ggml_tensor * indices;
 
-        for (int i = 0; i < n_q; i++) {
-            encodec_quant_block block = model.quantizer.blocks[i];
+    //     for (int i = 0; i < n_q; i++) {
+    //         encodec_quant_block block = model.quantizer.blocks[i];
 
-            // compute distance
-            // [seq_length, n_bins]
-            struct ggml_tensor * dp = ggml_scale(
-                    ctx0, ggml_mul_mat(ctx0, block.embed, residual), ggml_new_f32(ctx0, -2.0f));
+    //         // compute distance
+    //         // [seq_length, n_bins]
+    //         struct ggml_tensor * dp = ggml_scale(
+    //                 ctx0, ggml_mul_mat(ctx0, block.embed, residual), ggml_new_f32(ctx0, -2.0f));
 
-            // [n_bins]
-            struct ggml_tensor * sqr_embed     = ggml_sqr(ctx0, block.embed);
-            struct ggml_tensor * sqr_embed_nrm = ggml_sum_rows(ctx0, sqr_embed);
+    //         // [n_bins]
+    //         struct ggml_tensor * sqr_embed     = ggml_sqr(ctx0, block.embed);
+    //         struct ggml_tensor * sqr_embed_nrm = ggml_sum_rows(ctx0, sqr_embed);
 
-            // [seq_length]
-            struct ggml_tensor * sqr_inp     = ggml_sqr(ctx0, residual);
-            struct ggml_tensor * sqr_inp_nrm = ggml_sum_rows(ctx0, sqr_inp);
+    //         // [seq_length]
+    //         struct ggml_tensor * sqr_inp     = ggml_sqr(ctx0, residual);
+    //         struct ggml_tensor * sqr_inp_nrm = ggml_sum_rows(ctx0, sqr_inp);
 
-            // [seq_length, n_bins]
-            struct ggml_tensor * dist = ggml_add(ctx0, ggml_repeat(ctx0, sqr_inp_nrm, dp), dp);
-            dist = ggml_add(ctx0, ggml_repeat(ctx0, ggml_transpose(ctx0, sqr_embed_nrm), dist), dist);
-            dist = ggml_scale(ctx0, dist, ggml_new_f32(ctx0, -1.0f));
+    //         // [seq_length, n_bins]
+    //         struct ggml_tensor * dist = ggml_add(ctx0, ggml_repeat(ctx0, sqr_inp_nrm, dp), dp);
+    //         dist = ggml_add(ctx0, ggml_repeat(ctx0, ggml_transpose(ctx0, sqr_embed_nrm), dist), dist);
+    //         dist = ggml_scale(ctx0, dist, ggml_new_f32(ctx0, -1.0f));
 
-            // take the argmax over the column dimension
-            // [seq_length]
-            indices = ggml_argmax(ctx0, dist);
+    //         // take the argmax over the column dimension
+    //         // [seq_length]
+    //         indices = ggml_argmax(ctx0, dist);
 
-            // look up in embedding table
-            struct ggml_tensor * quantized = ggml_get_rows(ctx0, block.embed, indices);
+    //         // look up in embedding table
+    //         struct ggml_tensor * quantized = ggml_get_rows(ctx0, block.embed, indices);
 
-            residual = ggml_sub(ctx0, residual, quantized);
+    //         residual = ggml_sub(ctx0, residual, quantized);
 
-            codes = ggml_set_1d(ctx0, codes, indices, i*codes->nb[1]);
-        }
+    //         codes = ggml_set_1d(ctx0, codes, indices, i*codes->nb[1]);
+    //     }
 
-    }
+    // }
 
-    // quantizer (decode)
-    struct ggml_tensor * quantized_out;
-    {
-        const auto & hparams = model.hparams;
-        const int hidden_dim = hparams.hidden_dim;
+    // // quantizer (decode)
+    // struct ggml_tensor * quantized_out;
+    // {
+    //     const auto & hparams = model.hparams;
+    //     const int hidden_dim = hparams.hidden_dim;
 
-        const int seq_length = codes->ne[0];
-        const int n_q        = codes->ne[1];
+    //     const int seq_length = codes->ne[0];
+    //     const int n_q        = codes->ne[1];
 
-        quantized_out = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
-        // if (!ggml_allocr_is_measure(ectx.allocr)) {
-        //     quantized_out = ggml_set_zero(quantized_out);
-        // }
+    //     quantized_out = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
+    //     // if (!ggml_allocr_is_measure(ectx.allocr)) {
+    //     //     quantized_out = ggml_set_zero(quantized_out);
+    //     // }
 
-        for (int i = 0; i < n_q; i++) {
-            encodec_quant_block block = model.quantizer.blocks[i];
+    //     for (int i = 0; i < n_q; i++) {
+    //         encodec_quant_block block = model.quantizer.blocks[i];
 
-            struct ggml_tensor * indices   = ggml_view_1d(ctx0, codes, seq_length, i*codes->nb[1]);
-            struct ggml_tensor * quantized = ggml_get_rows(ctx0, block.embed, indices);
+    //         struct ggml_tensor * indices   = ggml_view_1d(ctx0, codes, seq_length, i*codes->nb[1]);
+    //         struct ggml_tensor * quantized = ggml_get_rows(ctx0, block.embed, indices);
 
-            quantized_out = ggml_add(ctx0, quantized_out, quantized);
-        }
+    //         quantized_out = ggml_add(ctx0, quantized_out, quantized);
+    //     }
 
-        quantized_out = ggml_cont(ctx0, ggml_transpose(ctx0, quantized_out));
-    }
+    //     quantized_out = ggml_cont(ctx0, ggml_transpose(ctx0, quantized_out));
+    // }
 
-    // decoder
-    struct ggml_tensor * decoded_inp;
-    struct ggml_tensor * out;
-    {
-        const auto & hparams = model.hparams;
+    // // decoder
+    // struct ggml_tensor * decoded_inp;
+    // struct ggml_tensor * out;
+    // {
+    //     const auto & hparams = model.hparams;
 
-        const int * ratios      = hparams.ratios;
-        const int kernel_size   = hparams.kernel_size;
-        const int res_kernel_sz = hparams.residual_kernel_size;
-        const int stride        = hparams.stride;
+    //     const int * ratios      = hparams.ratios;
+    //     const int kernel_size   = hparams.kernel_size;
+    //     const int res_kernel_sz = hparams.residual_kernel_size;
+    //     const int stride        = hparams.stride;
 
-        struct ggml_tensor * inpL = strided_conv_1d(
-            ctx0, quantized_out, model.decoder.init_conv_w,
-            model.decoder.init_conv_b, stride);
+    //     struct ggml_tensor * inpL = strided_conv_1d(
+    //         ctx0, quantized_out, model.decoder.init_conv_w,
+    //         model.decoder.init_conv_b, stride);
 
-        // lstm
-        {
-            struct ggml_tensor * cur = inpL;
+    //     // lstm
+    //     {
+    //         struct ggml_tensor * cur = inpL;
 
-            const encodec_lstm lstm = model.decoder.lstm;
+    //         const encodec_lstm lstm = model.decoder.lstm;
 
-            // first lstm layer
-            struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(
-                ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
+    //         // first lstm layer
+    //         struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(
+    //             ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
 
-            // second lstm layer
-            struct ggml_tensor * out = forward_pass_lstm_unilayer(
-                ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
+    //         // second lstm layer
+    //         struct ggml_tensor * out = forward_pass_lstm_unilayer(
+    //             ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
 
-            inpL = ggml_add(ctx0, inpL, out);
-        }
+    //         inpL = ggml_add(ctx0, inpL, out);
+    //     }
 
-        for (int layer_ix = 0; layer_ix < 4; layer_ix++) {
-            encodec_decoder_block block = model.decoder.blocks[layer_ix];
+    //     for (int layer_ix = 0; layer_ix < 4; layer_ix++) {
+    //         encodec_decoder_block block = model.decoder.blocks[layer_ix];
 
-            // upsampling layers
-            inpL = ggml_elu(ctx0, inpL);
+    //         // upsampling layers
+    //         inpL = ggml_elu(ctx0, inpL);
 
-            inpL = strided_conv_transpose_1d(
-                ctx0, inpL, block.us_conv_w, block.us_conv_b, ratios[layer_ix]);
+    //         inpL = strided_conv_transpose_1d(
+    //             ctx0, inpL, block.us_conv_w, block.us_conv_b, ratios[layer_ix]);
 
-            struct ggml_tensor * current = inpL;
+    //         struct ggml_tensor * current = inpL;
 
-            // shortcut
-            struct ggml_tensor * shortcut = strided_conv_1d(
-                ctx0, inpL, block.conv_sc_w, block.conv_sc_b, stride);
+    //         // shortcut
+    //         struct ggml_tensor * shortcut = strided_conv_1d(
+    //             ctx0, inpL, block.conv_sc_w, block.conv_sc_b, stride);
 
-            // conv1
-            current = ggml_elu(ctx0, current);
+    //         // conv1
+    //         current = ggml_elu(ctx0, current);
 
-            current = strided_conv_1d(
-                ctx0, current, block.conv_1_w, block.conv_1_b, stride);
+    //         current = strided_conv_1d(
+    //             ctx0, current, block.conv_1_w, block.conv_1_b, stride);
 
-            // conv2
-            current = ggml_elu(ctx0, current);
+    //         // conv2
+    //         current = ggml_elu(ctx0, current);
 
-            current = strided_conv_1d(
-                ctx0, current, block.conv_2_w, block.conv_2_b, stride);
+    //         current = strided_conv_1d(
+    //             ctx0, current, block.conv_2_w, block.conv_2_b, stride);
 
-            // residual connection
-            inpL = ggml_add(ctx0, current, shortcut);
-        }
+    //         // residual connection
+    //         inpL = ggml_add(ctx0, current, shortcut);
+    //     }
 
-        // final conv
-        {
-            inpL = ggml_elu(ctx0, inpL);
+    //     // final conv
+    //     {
+    //         inpL = ggml_elu(ctx0, inpL);
 
-            decoded_inp = strided_conv_1d(
-                ctx0, inpL, model.decoder.final_conv_w, model.decoder.final_conv_b, stride);
-        }
+    //         decoded_inp = strided_conv_1d(
+    //             ctx0, inpL, model.decoder.final_conv_w, model.decoder.final_conv_b, stride);
+    //     }
 
-        out = decoded_inp;
-    }
+    //     out = decoded_inp;
+    // }
 
-    ggml_build_forward_expand(gf, out);
+    ggml_build_forward_expand(gf, bp);
 
     ggml_free(ctx0);
 
@@ -939,6 +957,7 @@ bool encodec_eval(
 
     // reconstructed audio is the last one in the graph
     struct ggml_tensor * out = gf->nodes[gf->n_nodes - 1];
+    print_tensor(out);
 
     auto & out_audio = ectx->out_audio;
 
