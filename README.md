@@ -1,5 +1,10 @@
 # encodec.cpp
 
+![encodec.cpp](./assets/banner.png)
+
+[![Actions Status](https://github.com/PABannier/encodec.cpp/actions/workflows/build.yml/badge.svg)](https://github.com/PABannier/encodec.cpp/actions)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
 High-performance inference of [Meta's Encodec](https://github.com/facebookresearch/encodec) deep learning based audio codec model:
 
 - Plain C/C++ implementation without dependencies using [ggml](https://github.com/ggerganov/ggml)
@@ -21,7 +26,7 @@ Inference: encodec.h / encodec.cpp
 
 - The core tensor operations are implemented in C ([ggml.h](ggml.h) / [ggml.c](ggml.c))
 - The encoder-decoder architecture and the high-level C-style API are implemented in C++ ([encodec.h](encodec.h) / [encodec.cpp](encodec.cpp))
-- Sample usage is demonstrated in [main.cpp](examples/main)
+- Basic usage is demonstrated in [main.cpp](examples/main)
 
 ## Usage
 
@@ -30,7 +35,7 @@ Here are the steps for the bark model.
 ### Get the code
 
 ```bash
-git clone https://github.com/PABannier/encodec.cpp.git
+git clone --recurse-submodules https://github.com/PABannier/encodec.cpp.git
 cd encodec.cpp
 ```
 
