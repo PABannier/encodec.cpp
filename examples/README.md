@@ -5,18 +5,21 @@
 Some description.
 
 ```bash
+    ./main -t 4
 ```
 
-## Encoder-only
+## Compress (encoder only)
 
 Some description.
 
 ```bash
+    ./compress -t 4
 ```
 
-## Decoder-only
+## Decompress (decoder only)
 
 Some description.
 
 ```bash
+    ./decompress -t 4
 ```
