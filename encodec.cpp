@@ -765,9 +765,7 @@ struct ggml_tensor * encodec_forward_quantizer_encode(
     const auto & hparams = model.hparams;
     const auto & allocr  = ectx->allocr;
 
-    // const int n_q = hparams.n_q;
-    const int n_q = 16;
-    assert(n_q == 16);
+    const int n_q = hparams.n_q;
 
     const int seq_length = encoded_inp->ne[0];
 
@@ -828,8 +826,7 @@ struct ggml_tensor * encodec_forward_quantizer_decode(
     const auto & allocr  = ectx->allocr;
 
     const int hidden_dim = hparams.hidden_dim;
-    // const int n_q        = hparams.n_q;
-    const int n_q        = 16;
+    const int n_q        = hparams.n_q;
     const int seq_length = codes->ne[0];
 
     assert(n_q == codes->ne[1]);
@@ -946,11 +943,8 @@ struct ggml_cgraph * encodec_build_graph(
     const auto & allocr = ectx->allocr;
 
     // originally, n_q = n_q or len(self.layers)
-    // for this model, n_q is at most 32, but the implementation we are comparing
-    // our model against has only 16, hence we hardcode 16 as n_q for now.
-    // const int n_q = hparams.n_q;
-    const int n_q = 16;
-    assert(n_q == 16);
+    // for bark, n_q is set to 16...
+    const int n_q = hparams.n_q;
 
     // since we are using ggml-alloc, this buffer only needs enough space to hold the
     // ggml_tensor and ggml_cgraph structs, but not the tensor data
