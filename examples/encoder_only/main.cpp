@@ -85,14 +85,11 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    printf("\n");
-
-    // reconstruct audio
-    // TODO: call compressor
-    // if (!encodec_reconstruct_audio(ectx, original_audio_arr, params.n_threads)) {
-    //     printf("%s: error during inference\n", __func__);
-    //     return 1;
-    // }
+    // compress audio
+    if (!encodec_compress_audio(ectx, original_audio_arr, params.n_threads)) {
+        printf("%s: error during compression \n", __func__);
+        return 1;
+    }
 
     // write reconstructed audio on disk
     // TODO: write codec output

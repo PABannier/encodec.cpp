@@ -85,8 +85,6 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    printf("\n");
-
     // reconstruct audio
     if (!encodec_reconstruct_audio(ectx, original_audio_arr, params.n_threads)) {
         printf("%s: error during inference\n", __func__);
