@@ -16,6 +16,8 @@
 
 void print_tensor(struct ggml_tensor * a) {
     float sum = 0;
+    float maxv = -INFINITY;
+    float minv = INFINITY;
     if (a) {
         for (int i = 0; i < a->ne[3]; i++) {
             for (int j = 0; j < a->ne[2]; j++) {
@@ -25,23 +27,33 @@ void print_tensor(struct ggml_tensor * a) {
                             float * aval = (float *) (
                                 (char *) a->data + i*a->nb[3] + j*a->nb[2] + k*a->nb[1] + l*a->nb[0]);
                             sum += *aval;
-                            printf("%.4f ", *aval);
+                            maxv = *aval > maxv ? *aval : maxv;
+                            minv = *aval < minv ? *aval : minv;
+                            // printf("%.4f ", *aval);
+                        } else if (a->type == GGML_TYPE_F16) {
+                            ggml_fp16_t * tmp = (ggml_fp16_t *) (
+                                (char *) a->data + i*a->nb[3] + j*a->nb[2] + k*a->nb[1] + l*a->nb[0]);
+                            float aval = ggml_fp16_to_fp32(*tmp);
+                            sum += aval;
+                            maxv = aval > maxv ? aval : maxv;
+                            minv = aval < minv ? aval : minv;
+                            // printf("%.4f ", aval);
                         } else if (a->type == GGML_TYPE_I32) {
                             int32_t * aval = (int32_t *) (
                                 (char *) a->data + i*a->nb[3] + j*a->nb[2] + k*a->nb[1] + l*a->nb[0]);
                             sum += (float) *aval;
                             printf("%d ", *aval);
                         } else {
-                            throw;
+                            throw std::runtime_error("Wrong tensor type.");
                         }
                     }
-                    printf("\n");
+                    // printf("\n");
                 }
-                printf("\n\n");
+                // printf("\n\n");
             }
         }
-        printf("sum=%.2f\n", sum);
-        printf("shape=[%d,%d,%d,%d]\n", a->ne[0], a->ne[1], a->ne[2], a->ne[3]);
+        printf("sum=%.2f; max=%.2f; min=%.2f\n", sum, maxv, minv);
+        printf("shape=[%d, %d, %d, %d]\n", a->ne[0], a->ne[1], a->ne[2], a->ne[3]);
     }
 }
 
@@ -164,6 +176,37 @@ static struct ggml_tensor * strided_conv_1d(
     return dst;
 }
 
+static struct ggml_tensor * strided_conv_transpose_1d(
+      struct ggml_context * ctx0,
+       struct ggml_tensor * inp,
+       struct ggml_tensor * conv_w,
+       struct ggml_tensor * conv_b,
+                      int   stride) {
+
+    struct ggml_tensor * dst = ggml_conv_transpose_1d(
+        ctx0, conv_w, inp, stride, 0 /* p0 */, 1 /* d0 */);
+
+    return dst;
+
+    // add bias
+    dst = ggml_transpose(ctx0, dst);
+    dst = ggml_add(ctx0, ggml_repeat(ctx0, conv_b, dst), dst);
+    dst = ggml_cont(ctx0, ggml_transpose(ctx0, dst));
+
+    return dst;
+
+    // int kernel_size   = conv_w->ne[0];
+    // int padding_total = kernel_size - stride;
+
+    // int padding_right = ceilf(padding_total);
+    // int padding_left = padding_total - padding_right;
+
+    // struct ggml_tensor * unpadded = unpad_1d(ctx0, dst, padding_left, padding_right);
+    // unpadded = ggml_cont(ctx0, unpadded);
+
+    // return unpadded;
+}
+
 static struct ggml_tensor * forward_pass_lstm_unilayer(
             struct ggml_context * ctx0,
              struct ggml_allocr * allocr,
@@ -219,31 +262,6 @@ static struct ggml_tensor * forward_pass_lstm_unilayer(
     hs = ggml_cont(ctx0, ggml_transpose(ctx0, hs));
 
     return hs;
-}
-
-static struct ggml_tensor * strided_conv_transpose_1d(
-                ggml_context * ctx0,
-                ggml_tensor * inp,
-                ggml_tensor * conv_w,
-                ggml_tensor * conv_b,
-                        int   stride) {
-    int kernel_size   = conv_w->ne[0];
-    int padding_total = kernel_size - stride;
-
-    struct ggml_tensor * dst = ggml_conv_transpose_1d(ctx0, conv_w, inp, stride, 0, 1);
-
-    // add bias
-    dst = ggml_transpose(ctx0, dst);
-    dst = ggml_add(ctx0, ggml_repeat(ctx0, conv_b, dst), dst);
-    dst = ggml_cont(ctx0, ggml_transpose(ctx0, dst));
-
-    int padding_right = ceilf(padding_total);
-    int padding_left = padding_total - padding_right;
-
-    struct ggml_tensor * unpadded = unpad_1d(ctx0, dst, padding_left, padding_right);
-    unpadded = ggml_cont(ctx0, unpadded);
-
-    return unpadded;
 }
 
 bool encodec_load_model_weights(const std::string& fname, encodec_model& model) {
@@ -856,67 +874,69 @@ struct ggml_cgraph * encodec_graph(
     bp = quantized_out;
 
     // decoder
-    // struct ggml_tensor * decoded_inp;
-    // struct ggml_tensor * out;
+    struct ggml_tensor * decoded_inp;
+    struct ggml_tensor * out;
     // {
-    //     const auto & hparams = model.hparams;
+        const auto & hparams = model.hparams;
 
-    //     const int * ratios      = hparams.ratios;
-    //     const int kernel_size   = hparams.kernel_size;
-    //     const int res_kernel_sz = hparams.residual_kernel_size;
-    //     const int stride        = hparams.stride;
+        const int * ratios      = hparams.ratios;
+        const int kernel_size   = hparams.kernel_size;
+        const int res_kernel_sz = hparams.residual_kernel_size;
+        const int stride        = hparams.stride;
 
-    //     struct ggml_tensor * inpL = strided_conv_1d(
-    //         ctx0, quantized_out, model.decoder.init_conv_w,
-    //         model.decoder.init_conv_b, stride);
+        struct ggml_tensor * inpL = strided_conv_1d(
+            ctx0, quantized_out, model.decoder.init_conv_w,
+            model.decoder.init_conv_b, stride);
 
-    //     // lstm
-    //     {
-    //         struct ggml_tensor * cur = inpL;
+        // lstm
+        {
+            struct ggml_tensor * cur = inpL;
 
-    //         const encodec_lstm lstm = model.decoder.lstm;
+            const encodec_lstm lstm = model.decoder.lstm;
 
-    //         // first lstm layer
-    //         struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(
-    //             ctx0, allocr, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
+            // first lstm layer
+            struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(
+                ctx0, allocr, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
 
-    //         // second lstm layer
-    //         struct ggml_tensor * out = forward_pass_lstm_unilayer(
-    //             ctx0, allocr, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
+            // second lstm layer
+            struct ggml_tensor * out = forward_pass_lstm_unilayer(
+                ctx0, allocr, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
 
-    //         inpL = ggml_add(ctx0, inpL, out);
-    //     }
+            inpL = ggml_add(ctx0, inpL, out);
+        }
 
-    //     for (int layer_ix = 0; layer_ix < 4; layer_ix++) {
-    //         encodec_decoder_block block = model.decoder.blocks[layer_ix];
+        for (int layer_ix = 0; layer_ix < 1; layer_ix++) {
+            encodec_decoder_block block = model.decoder.blocks[layer_ix];
 
-    //         // upsampling layers
-    //         inpL = ggml_elu(ctx0, inpL);
+            // upsampling layers
+            inpL = ggml_elu(ctx0, inpL);
 
-    //         inpL = strided_conv_transpose_1d(
-    //             ctx0, inpL, block.us_conv_w, block.us_conv_b, ratios[layer_ix]);
+            inpL = strided_conv_transpose_1d(
+                ctx0, inpL, block.us_conv_w, block.us_conv_b, ratios[layer_ix]);
 
-    //         struct ggml_tensor * current = inpL;
+            bp = inpL;
 
-    //         // shortcut
-    //         struct ggml_tensor * shortcut = strided_conv_1d(
-    //             ctx0, inpL, block.conv_sc_w, block.conv_sc_b, stride);
+            // struct ggml_tensor * current = inpL;
 
-    //         // conv1
-    //         current = ggml_elu(ctx0, current);
+            // // shortcut
+            // struct ggml_tensor * shortcut = strided_conv_1d(
+            //     ctx0, inpL, block.conv_sc_w, block.conv_sc_b, stride);
 
-    //         current = strided_conv_1d(
-    //             ctx0, current, block.conv_1_w, block.conv_1_b, stride);
+            // // conv1
+            // current = ggml_elu(ctx0, current);
 
-    //         // conv2
-    //         current = ggml_elu(ctx0, current);
+            // current = strided_conv_1d(
+            //     ctx0, current, block.conv_1_w, block.conv_1_b, stride);
 
-    //         current = strided_conv_1d(
-    //             ctx0, current, block.conv_2_w, block.conv_2_b, stride);
+            // // conv2
+            // current = ggml_elu(ctx0, current);
 
-    //         // residual connection
-    //         inpL = ggml_add(ctx0, current, shortcut);
-    //     }
+            // current = strided_conv_1d(
+            //     ctx0, current, block.conv_2_w, block.conv_2_b, stride);
+
+            // // residual connection
+            // inpL = ggml_add(ctx0, current, shortcut);
+        }
 
     //     // final conv
     //     {
@@ -960,8 +980,13 @@ bool encodec_eval(
     ggml_backend_graph_compute(model.backend, gf);
 
     // reconstructed audio is the last one in the graph
+    struct ggml_tensor * outn1 = gf->nodes[gf->n_nodes - 2];
+    print_tensor(outn1);
     struct ggml_tensor * out = gf->nodes[gf->n_nodes - 1];
     print_tensor(out);
+
+    struct ggml_tensor * my_convtr_w = ectx->model.decoder.blocks[0].us_conv_w;
+    print_tensor(my_convtr_w);
 
     auto & out_audio = ectx->out_audio;
 
