@@ -46,6 +46,7 @@ void print_tensor(struct ggml_tensor * a) {
                 printf("\n\n");
             }
         }
+        printf("dim = [%d, %d, %d, %d]\n", a->ne[0], a->ne[1], a->ne[2], a->ne[3]);
     }
 }
 
@@ -765,7 +766,7 @@ struct ggml_tensor * encodec_forward_quantizer_encode(
     const auto & hparams = model.hparams;
     const auto & allocr  = ectx->allocr;
 
-    const int n_q = hparams.n_q;
+    const int n_q = 16;
 
     const int seq_length = encoded_inp->ne[0];
 
@@ -826,7 +827,7 @@ struct ggml_tensor * encodec_forward_quantizer_decode(
     const auto & allocr  = ectx->allocr;
 
     const int hidden_dim = hparams.hidden_dim;
-    const int n_q        = hparams.n_q;
+    const int n_q        = 16;
     const int seq_length = codes->ne[0];
 
     assert(n_q == codes->ne[1]);
@@ -944,7 +945,8 @@ struct ggml_cgraph * encodec_build_graph(
 
     // originally, n_q = n_q or len(self.layers)
     // for bark, n_q is set to 16...
-    const int n_q = hparams.n_q;
+    // const int n_q = hparams.n_q;
+    const int n_q = 16;
 
     // since we are using ggml-alloc, this buffer only needs enough space to hold the
     // ggml_tensor and ggml_cgraph structs, but not the tensor data
@@ -961,11 +963,9 @@ struct ggml_cgraph * encodec_build_graph(
 
     struct ggml_cgraph * gf = ggml_new_graph(ctx0);
 
-    struct ggml_tensor * inp;
-
     const int N = inp_audio.size();
 
-    inp = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, N);
+    struct ggml_tensor * inp = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, N);
     ggml_allocr_alloc(allocr, inp);
 
     // avoid writing to tensors if we are only measuring the memory usage
@@ -973,10 +973,10 @@ struct ggml_cgraph * encodec_build_graph(
         ggml_backend_tensor_set(inp, inp_audio.data(), 0, N*ggml_element_size(inp));
     }
 
-    struct ggml_tensor * encoded_inp = encodec_forward_encoder(ectx, ctx0, inp);
-    struct ggml_tensor * codes       = encodec_forward_quantizer_encode(ectx, ctx0, encoded_inp);
-    struct ggml_tensor * quantized   = encodec_forward_quantizer_decode(ectx, ctx0, codes);
-    struct ggml_tensor * decoded     = encodec_forward_decoder(ectx, ctx0, quantized);
+    struct ggml_tensor * encoded   = encodec_forward_encoder(ectx, ctx0, inp);
+    struct ggml_tensor * codes     = encodec_forward_quantizer_encode(ectx, ctx0, encoded);
+    struct ggml_tensor * quantized = encodec_forward_quantizer_decode(ectx, ctx0, codes);
+    struct ggml_tensor * decoded   = encodec_forward_decoder(ectx, ctx0, quantized);
 
     switch(mode) {
         case encodec_run_mode::full:
@@ -996,7 +996,8 @@ struct ggml_cgraph * encodec_build_graph(
 
     ggml_free(ctx0);
 
-    ectx->codes = codes;
+    ectx->encoded = encoded;
+    ectx->codes   = codes;
     ectx->decoded = decoded;
 
     return gf;

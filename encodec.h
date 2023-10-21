@@ -156,6 +156,7 @@ struct encodec_context {
     struct ggml_allocr * allocr = NULL;
 
     // intermediate steps
+    struct ggml_tensor * encoded = NULL;  // Encoded audio
     struct ggml_tensor * codes   = NULL;  // Quantized representation of audio in codebook
     struct ggml_tensor * decoded = NULL;  // Reconstructed audio from codes
 
