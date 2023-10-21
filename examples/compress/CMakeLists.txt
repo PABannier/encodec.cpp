@@ -1,3 +1,3 @@
-set(TARGET encoder_only)
+set(TARGET compress)
 add_executable(${TARGET} main.cpp)
 target_link_libraries(${TARGET} PRIVATE encodec common)
