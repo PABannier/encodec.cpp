@@ -3,7 +3,7 @@ set(TARGET debug_conv_transpose)
 add_executable(${TARGET} main.cpp)
 
 install(TARGETS ${TARGET} RUNTIME)
-target_link_libraries(${TARGET} PRIVATE encodec.cpp ${CMAKE_THREAD_LIBS_INIT})
+target_link_libraries(${TARGET} PRIVATE ggml encodec ${CMAKE_THREAD_LIBS_INIT})
 target_compile_features(${TARGET} PRIVATE cxx_std_14)
 
 if(MSVC)

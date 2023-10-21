@@ -31,7 +31,7 @@ void print_tensor(struct ggml_tensor * a) {
             }
         }
         printf("sum=%.2f\n", sum);
-        printf("shape=[%d, %d, %d, %d]\n", a->ne[0], a->ne[1], a->ne[2], a->ne[3]);
+        printf("shape=[%lld, %lld, %lld, %lld]\n", a->ne[0], a->ne[1], a->ne[2], a->ne[3]);
         printf("--\n");
     }
 }
