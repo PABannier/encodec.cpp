@@ -170,6 +170,7 @@ static struct ggml_tensor * strided_conv_1d(
 
 static struct ggml_tensor * forward_pass_lstm_unilayer(
             struct ggml_context * ctx0,
+             struct ggml_allocr * allocr,
              struct ggml_tensor * inp,
              struct ggml_tensor * weight_ih,
              struct ggml_tensor * weight_hh,
@@ -181,9 +182,18 @@ static struct ggml_tensor * forward_pass_lstm_unilayer(
     const int seq_length = inp->ne[0];
 
     struct ggml_tensor * hs = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
+    ggml_allocr_alloc(allocr, hs);
 
     struct ggml_tensor * c_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim);
+    ggml_allocr_alloc(allocr, c_t);
+
     struct ggml_tensor * h_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim);
+    ggml_allocr_alloc(allocr, h_t);
+
+    if (!ggml_allocr_is_measure(allocr)) {
+        h_t = ggml_set_zero(h_t);
+        c_t = ggml_set_zero(c_t);
+    }
 
     struct ggml_tensor * current = ggml_cont(ctx0, ggml_transpose(ctx0, inp));
 
@@ -673,8 +683,9 @@ struct ggml_tensor * encodec_forward_encoder(
         return NULL;
     }
 
-    const auto & model = ectx->model;
+    const auto & model   = ectx->model;
     const auto & hparams = model.hparams;
+    const auto & allocr  = ectx->allocr;
 
     const int * ratios      = hparams.ratios;
     const int kernel_size   = hparams.kernel_size;
@@ -723,11 +734,11 @@ struct ggml_tensor * encodec_forward_encoder(
 
         // first lstm layer
         struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(
-            ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
+            ctx0, allocr, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
 
         // second lstm layer
         struct ggml_tensor * out = forward_pass_lstm_unilayer(
-            ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
+            ctx0, allocr, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
 
         inpL = ggml_add(ctx0, inpL, out);
     }
@@ -750,15 +761,18 @@ struct ggml_tensor * encodec_forward_quantizer_encode(
         return NULL;
     }
 
-    const auto & model = ectx->model;
+    const auto & model   = ectx->model;
     const auto & hparams = model.hparams;
+    const auto & allocr  = ectx->allocr;
 
-    const int n_q = hparams.n_q;
+    // const int n_q = hparams.n_q;
+    const int n_q = 16;
     assert(n_q == 16);
 
     const int seq_length = encoded_inp->ne[0];
 
     struct ggml_tensor * codes = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, seq_length, n_q);
+    ggml_allocr_alloc(allocr, codes);
 
     struct ggml_tensor * inpL = ggml_cont(ctx0, ggml_transpose(ctx0, encoded_inp));
     struct ggml_tensor * residual = inpL;
@@ -814,14 +828,14 @@ struct ggml_tensor * encodec_forward_quantizer_decode(
     const auto & allocr  = ectx->allocr;
 
     const int hidden_dim = hparams.hidden_dim;
-    const int n_q        = hparams.n_q;
+    // const int n_q        = hparams.n_q;
+    const int n_q        = 16;
     const int seq_length = codes->ne[0];
 
     assert(n_q == codes->ne[1]);
 
-    struct ggml_tensor * quantized_out;
-
-    quantized_out = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
+    struct ggml_tensor * quantized_out = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
+    ggml_allocr_alloc(allocr, quantized_out);
     if (!ggml_allocr_is_measure(allocr)) {
         quantized_out = ggml_set_zero(quantized_out);
     }
@@ -851,6 +865,7 @@ struct ggml_tensor * encodec_forward_decoder(
 
     const auto & model = ectx->model;
     const auto & hparams = model.hparams;
+    const auto & allocr = ectx->allocr;
 
     const int * ratios      = hparams.ratios;
     const int kernel_size   = hparams.kernel_size;
@@ -869,11 +884,13 @@ struct ggml_tensor * encodec_forward_decoder(
 
         // first lstm layer
         struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(
-            ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
+            ctx0, allocr, cur, lstm.l0_ih_w, lstm.l0_hh_w,
+            lstm.l0_ih_b, lstm.l0_hh_b);
 
         // second lstm layer
         struct ggml_tensor * out = forward_pass_lstm_unilayer(
-            ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
+            ctx0, allocr, hs1, lstm.l1_ih_w, lstm.l1_hh_w,
+            lstm.l1_ih_b, lstm.l1_hh_b);
 
         inpL = ggml_add(ctx0, inpL, out);
     }
@@ -913,7 +930,8 @@ struct ggml_tensor * encodec_forward_decoder(
     inpL = ggml_elu(ctx0, inpL);
 
     struct ggml_tensor * decoded_inp = strided_conv_1d(
-            ctx0, inpL, model.decoder.final_conv_w, model.decoder.final_conv_b, stride);
+            ctx0, inpL, model.decoder.final_conv_w,
+            model.decoder.final_conv_b, stride);
 
     return decoded_inp;
 }
@@ -922,16 +940,17 @@ struct ggml_cgraph * encodec_build_graph(
         struct encodec_context * ectx,
             std::vector<float> & inp_audio,
         const encodec_run_mode   mode) {
+
     const auto & model = ectx->model;
     const auto & hparams = model.hparams;
+    const auto & allocr = ectx->allocr;
 
     // originally, n_q = n_q or len(self.layers)
     // for this model, n_q is at most 32, but the implementation we are comparing
     // our model against has only 16, hence we hardcode 16 as n_q for now.
-    const int n_q = hparams.n_q;
+    // const int n_q = hparams.n_q;
+    const int n_q = 16;
     assert(n_q == 16);
-
-    auto & allocr = ectx->allocr;
 
     // since we are using ggml-alloc, this buffer only needs enough space to hold the
     // ggml_tensor and ggml_cgraph structs, but not the tensor data
