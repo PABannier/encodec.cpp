@@ -35,9 +35,9 @@ void encodec_print_usage(char ** argv, const encodec_params & params) {
     fprintf(stderr, "  -m FNAME, --model FNAME\n");
     fprintf(stderr, "                        model path (default: %s)\n", params.model_path.c_str());
     fprintf(stderr, "  -i FNAME, --input FNAME\n");
-    fprintf(stderr, "                        original audio wav (default: %s)\n", params.original_audio_path.c_str());
+    fprintf(stderr, "                        original audio wav (default: %s)\n", params.input_path.c_str());
     fprintf(stderr, "  -o FNAME, --outwav FNAME\n");
-    fprintf(stderr, "                        output generated wav (default: %s)\n", params.dest_wav_path.c_str());
+    fprintf(stderr, "                        output generated wav (default: %s)\n", params.output_path.c_str());
     fprintf(stderr, "\n");
 }
 
@@ -50,9 +50,9 @@ int encodec_params_parse(int argc, char ** argv, encodec_params & params) {
         } else if (arg == "-m" || arg == "--model") {
             params.model_path = argv[++i];
         } else if (arg == "-o" || arg == "--outwav") {
-            params.dest_wav_path = argv[++i];
+            params.output_path = argv[++i];
         } else if (arg == "-i" || arg == "--input") {
-            params.original_audio_path = argv[++i];
+            params.input_path = argv[++i];
         } else if (arg == "-h" || arg == "--help") {
             encodec_print_usage(argv, params);
             exit(0);
