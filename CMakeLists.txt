@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.12)
-project("encodec.cpp" C CXX)
+project("encodec" C CXX)
 
 if (NOT XCODE AND NOT MSVC AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -20,7 +20,7 @@ option(ENCODEC_BUILD_EXAMPLES             "encodec: build examples" ${ENCODEC_ST
 
 # Build libraries
 
-set(ENCODEC_LIB encodec.cpp)
+set(ENCODEC_LIB encodec)
 
 add_subdirectory(ggml)
 

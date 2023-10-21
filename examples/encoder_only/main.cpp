@@ -17,7 +17,7 @@ struct encodec_params {
     std::string original_audio_path = "/Users/pbannier/Documents/encodec/decomp_24khz_True.wav";
 
     // output location
-    std::string dest_wav_path = "output.wav";
+    std::string dest_path = "output.bin";
 };
 
 void encodec_print_usage(char ** argv, const encodec_params & params) {
@@ -30,8 +30,8 @@ void encodec_print_usage(char ** argv, const encodec_params & params) {
     fprintf(stderr, "                        model path (default: %s)\n", params.model_path.c_str());
     fprintf(stderr, "  -i FNAME, --input FNAME\n");
     fprintf(stderr, "                        original audio wav (default: %s)\n", params.original_audio_path.c_str());
-    fprintf(stderr, "  -o FNAME, --outwav FNAME\n");
-    fprintf(stderr, "                        output generated wav (default: %s)\n", params.dest_wav_path.c_str());
+    fprintf(stderr, "  -o FNAME, --output FNAME\n");
+    fprintf(stderr, "                        output compressed audio (default: %s)\n", params.dest_path.c_str());
     fprintf(stderr, "\n");
 }
 
@@ -44,7 +44,7 @@ int encodec_params_parse(int argc, char ** argv, encodec_params & params) {
         } else if (arg == "-m" || arg == "--model") {
             params.model_path = argv[++i];
         } else if (arg == "-o" || arg == "--outwav") {
-            params.dest_wav_path = argv[++i];
+            params.dest_path = argv[++i];
         } else if (arg == "-i" || arg == "--input") {
             params.original_audio_path = argv[++i];
         } else if (arg == "-h" || arg == "--help") {
