@@ -43,7 +43,7 @@ int encodec_params_parse(int argc, char ** argv, encodec_params & params) {
             params.n_threads = std::stoi(argv[++i]);
         } else if (arg == "-m" || arg == "--model") {
             params.model_path = argv[++i];
-        } else if (arg == "-o" || arg == "--outwav") {
+        } else if (arg == "-o" || arg == "--output") {
             params.dest_path = argv[++i];
         } else if (arg == "-i" || arg == "--input") {
             params.original_audio_path = argv[++i];
@@ -88,14 +88,14 @@ int main(int argc, char **argv) {
     printf("\n");
 
     // reconstruct audio
-    if (!encodec_reconstruct_audio(ectx, original_audio_arr, params.n_threads)) {
-        printf("%s: error during inference\n", __func__);
-        return 1;
-    }
+    // TODO: call compressor
+    // if (!encodec_reconstruct_audio(ectx, original_audio_arr, params.n_threads)) {
+    //     printf("%s: error during inference\n", __func__);
+    //     return 1;
+    // }
 
     // write reconstructed audio on disk
-    auto & audio_arr = ectx->out_audio;
-    write_wav_on_disk(audio_arr, params.dest_wav_path);
+    // TODO: write codec output
 
     // report timing
     {

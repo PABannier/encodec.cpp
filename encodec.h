@@ -170,4 +170,9 @@ bool encodec_reconstruct_audio(
                 std::vector<float> & raw_audio,
                                int   n_threads);
 
+bool encodec_compress_audio(
+            struct encodec_context * ectx,
+                std::vector<float> & raw_audio,
+                               int   n_threads);
+
 void encodec_free(struct encodec_context * ectx);

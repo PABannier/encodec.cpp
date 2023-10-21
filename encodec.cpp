@@ -14,6 +14,15 @@
 #include "encodec.h"
 
 
+typedef enum {
+    // Run the end-to-end encoder-decoder pipeline
+    full,
+    // Encode an audio (encoder + quantizer encode)
+    encode_only,
+    // Decode an audio from a compressed representation (quantizer decode + decoder)
+    decode_only,
+} encodec_run_mode;
+
 void print_tensor(struct ggml_tensor * a) {
     if (a) {
         for (int i = 0; i < a->ne[3]; i++) {
@@ -657,7 +666,8 @@ bool encodec_load_model_weights(const std::string& fname, encodec_model& model) 
 
 struct ggml_cgraph * encodec_graph(
               struct encodec_context * ectx,
-            const std::vector<float> & inp_audio) {
+            const std::vector<float> & inp_audio,
+              const encodec_run_mode   mode) {
     const int N = inp_audio.size();
 
     const auto & model = ectx->model;
@@ -919,14 +929,15 @@ struct ggml_cgraph * encodec_graph(
 bool encodec_eval(
         struct encodec_context * ectx,
             std::vector<float> & raw_audio,
-                     const int   n_threads) {
+                     const int   n_threads,
+        const encodec_run_mode   mode) {
     auto & model  = ectx->model;
     auto & allocr = ectx->allocr;
 
     // reset the allocator to free all the memory allocated during the previous inference
     ggml_allocr_reset(allocr);
 
-    struct ggml_cgraph * gf = encodec_graph(ectx, raw_audio);
+    struct ggml_cgraph * gf = encodec_graph(ectx, raw_audio, mode);
 
     // allocate tensors
     ggml_allocr_alloc_graph(allocr, gf);
@@ -963,7 +974,7 @@ bool encodec_reconstruct_audio(
         ectx->allocr = ggml_allocr_new_measure(align);
 
         // create the graph for memory usage estimation
-        struct ggml_cgraph * gf = encodec_graph(ectx, raw_audio);
+        struct ggml_cgraph * gf = encodec_graph(ectx, raw_audio, encodec_run_mode::full);
 
         // compute the required memory
         size_t mem_size = ggml_allocr_alloc_graph(ectx->allocr, gf);
@@ -979,7 +990,46 @@ bool encodec_reconstruct_audio(
     printf("\n\n");
 
     // encodec eval
-    if (!encodec_eval(ectx, raw_audio, n_threads)) {
+    if (!encodec_eval(ectx, raw_audio, n_threads, encodec_run_mode::full)) {
+        fprintf(stderr, "%s: failed to run encodec eval\n", __func__);
+        return false;
+    }
+
+    ectx->t_compute_ms = ggml_time_ms() - t_start_ms;
+
+    return true;
+}
+
+bool encodec_compress_audio(
+            struct encodec_context * ectx,
+                std::vector<float> & raw_audio,
+                               int   n_threads) {
+    const int64_t t_start_ms = ggml_time_ms();
+
+    // allocate the compute buffer
+    {
+        // alignment required by the backend
+        size_t align = ggml_backend_get_alignment(ectx->model.backend);
+        ectx->allocr = ggml_allocr_new_measure(align);
+
+        // create the graph for memory usage estimation
+        struct ggml_cgraph * gf = encodec_graph(ectx, raw_audio, encodec_run_mode::encode_only);
+
+        // compute the required memory
+        size_t mem_size = ggml_allocr_alloc_graph(ectx->allocr, gf);
+
+        // recreate the allocator with the required memory
+        ggml_allocr_free(ectx->allocr);
+        ectx->buf_compute = ggml_backend_alloc_buffer(ectx->model.backend, mem_size);
+        ectx->allocr = ggml_allocr_new_from_buffer(ectx->buf_compute);
+
+        fprintf(stderr, "%s: compute buffer size: %.2f MB\n", __func__, mem_size/1024.0/1024.0);
+    }
+
+    printf("\n\n");
+
+    // encodec eval
+    if (!encodec_eval(ectx, raw_audio, n_threads, encodec_run_mode::encode_only)) {
         fprintf(stderr, "%s: failed to run encodec eval\n", __func__);
         return false;
     }
