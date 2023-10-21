@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
     }
 
     // write reconstructed audio on disk
-    if (!write_codes_to_file(params.output_path, ectx->out_codes)) {
+    if (!write_codes_to_file(params.output_path, ectx->out_codes, original_audio_arr.size())) {
         printf("%s: error during writing codes to file\n", __func__);
         return 1;
     }
