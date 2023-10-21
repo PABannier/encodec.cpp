@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -20,7 +21,7 @@
 #pragma pack(push, 1)   //  exact fit - no padding
 struct encodec_file_header {
     uint32_t magic;
-    uint32_t version;
+    uint8_t  version;
     uint32_t meta_length;
 };
 #pragma pack(pop)        // back to whatever the previous packing mode was
@@ -140,6 +141,57 @@ class BitPacker {
         std::ofstream & fo;
 };
 
+class BitUnpacker {
+    public:
+        // Constructor
+        BitUnpacker(int bits, std::ifstream& fo)
+            : bits(bits), fo(fo), mask((1 << bits) - 1), current_value(0), current_bits(0) {}
+
+        // Member function to pull a single value from the stream
+        int pull() {
+            while (current_bits < bits) {
+                char buf;
+                if (!fo.read(&buf, 1)) {
+                    return {};  // returns empty optional indicating end of stream
+                }
+                uint8_t character = static_cast<uint8_t>(buf);
+                current_value += character << current_bits;
+                current_bits += 8;
+            }
+
+            int out = current_value & mask;
+            current_value >>= bits;
+            current_bits -= bits;
+            return out;  // returns the extracted value
+        }
+
+    private:
+        int bits;
+        std::ifstream& fo;
+        int mask;
+        int current_value;
+        int current_bits;
+};
+
+std::vector<char> read_exactly(std::ifstream& fo, size_t size) {
+    std::vector<char> buf;
+    buf.reserve(size);
+
+    while (buf.size() < size) {
+        char chunk[size];
+        fo.read(chunk, size);
+        size_t bytesRead = fo.gcount();
+        if (bytesRead == 0) {
+            throw std::runtime_error("Impossible to read enough data from the stream, " +
+                                     std::to_string(size) + " bytes remaining.");
+        }
+        buf.insert(buf.end(), chunk, chunk + bytesRead);
+        size -= bytesRead;
+    }
+
+    return buf;
+}
+
 void write_encodec_header(std::ofstream & fo, std::vector<int32_t> & codes) {
     assert(codes.size() % 32 == 0);  // codes.size() must be a multiple of 32 (32 codebooks)
 
@@ -162,6 +214,26 @@ void write_encodec_header(std::ofstream & fo, std::vector<int32_t> & codes) {
     fo.flush();
 }
 
+nlohmann::json read_ecdc_header(std::ifstream& fo) {
+    int size_header = 4 * sizeof(char) + sizeof(uint8_t) + sizeof(uint32_t);
+    std::vector<char> header_bytes = read_exactly(fo, size_header);
+
+    int32_t  * magic       = reinterpret_cast<int32_t*>(header_bytes.data(), header_bytes.data() + 4*sizeof(char));
+    uint8_t  * version     = reinterpret_cast<uint8_t*>(header_bytes.data() + 4*sizeof(char));
+    uint32_t * meta_length = reinterpret_cast<uint32_t*>(header_bytes.data() + 4*sizeof(char) + sizeof(uint8_t));
+
+    if (*magic != ENCODEC_MAGIC) {
+        throw std::runtime_error("File is not in ECDC format.");
+    }
+    if (*version != 0) {
+        throw std::runtime_error("Version not supported.");
+    }
+
+    std::vector<char> meta_bytes = read_exactly(fo, *meta_length);
+    std::string meta_str(meta_bytes.begin(), meta_bytes.end());
+    return nlohmann::json::parse(meta_str);
+}
+
 void write_encodec_codes(std::ofstream & fo, std::vector<int32_t> & codes) {
     BitPacker bp(BITS_PER_CODEBOOK, fo);
     for (int32_t code : codes) {
@@ -177,4 +249,27 @@ bool write_codes_to_file(std::string dest_path, std::vector<int32_t> & codes) {
     fo.close();
 
     return true;
+}
+
+std::vector<int32_t> read_codes_from_file(std::string code_path) {
+    std::ifstream fin(code_path, std::ios::binary);
+    nlohmann::json metadata = read_ecdc_header(fin);
+
+    uint32_t audio_length = metadata["audio_length"];
+    uint32_t n_codebooks  = metadata["n_codebooks"];
+
+    std::vector<int32_t> codes;
+    codes.resize(audio_length * n_codebooks);
+
+    BitUnpacker bu(BITS_PER_CODEBOOK, fin);
+
+    for (int t = 0; t < audio_length; t++) {
+        for (int c = 0; c < n_codebooks; c++) {
+            codes[t * n_codebooks + c] = bu.pull();
+        }
+    }
+
+    fin.close();
+
+    return codes;
 }
