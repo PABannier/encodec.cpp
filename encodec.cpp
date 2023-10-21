@@ -24,6 +24,9 @@ typedef enum {
 } encodec_run_mode;
 
 void print_tensor(struct ggml_tensor * a) {
+    float sum = 0;
+    float maxv = -INFINITY;
+    float minv = INFINITY;
     if (a) {
         for (int i = 0; i < a->ne[3]; i++) {
             for (int j = 0; j < a->ne[2]; j++) {
@@ -32,21 +35,34 @@ void print_tensor(struct ggml_tensor * a) {
                         if (a->type == GGML_TYPE_F32) {
                             float * aval = (float *) (
                                 (char *) a->data + i*a->nb[3] + j*a->nb[2] + k*a->nb[1] + l*a->nb[0]);
-                            printf("%.4f ", *aval);
+                            sum += *aval;
+                            maxv = *aval > maxv ? *aval : maxv;
+                            minv = *aval < minv ? *aval : minv;
+                            // printf("%.4f ", *aval);
+                        } else if (a->type == GGML_TYPE_F16) {
+                            ggml_fp16_t * tmp = (ggml_fp16_t *) (
+                                (char *) a->data + i*a->nb[3] + j*a->nb[2] + k*a->nb[1] + l*a->nb[0]);
+                            float aval = ggml_fp16_to_fp32(*tmp);
+                            sum += aval;
+                            maxv = aval > maxv ? aval : maxv;
+                            minv = aval < minv ? aval : minv;
+                            // printf("%.4f ", aval);
                         } else if (a->type == GGML_TYPE_I32) {
                             int32_t * aval = (int32_t *) (
                                 (char *) a->data + i*a->nb[3] + j*a->nb[2] + k*a->nb[1] + l*a->nb[0]);
+                            sum += (float) *aval;
                             printf("%d ", *aval);
                         } else {
-                            throw;
+                            throw std::runtime_error("Wrong tensor type.");
                         }
                     }
-                    printf("\n");
+                    // printf("\n");
                 }
-                printf("\n\n");
+                // printf("\n\n");
             }
         }
-        printf("dim = [%d, %d, %d, %d]\n", a->ne[0], a->ne[1], a->ne[2], a->ne[3]);
+        printf("sum=%.2f; max=%.2f; min=%.2f\n", sum, maxv, minv);
+        printf("shape=[%d, %d, %d, %d]\n", a->ne[0], a->ne[1], a->ne[2], a->ne[3]);
     }
 }
 
@@ -169,6 +185,37 @@ static struct ggml_tensor * strided_conv_1d(
     return dst;
 }
 
+static struct ggml_tensor * strided_conv_transpose_1d(
+      struct ggml_context * ctx0,
+       struct ggml_tensor * inp,
+       struct ggml_tensor * conv_w,
+       struct ggml_tensor * conv_b,
+                      int   stride) {
+
+    struct ggml_tensor * dst = ggml_conv_transpose_1d(
+        ctx0, conv_w, inp, stride, 0 /* p0 */, 1 /* d0 */);
+
+    return dst;
+
+    // add bias
+    dst = ggml_transpose(ctx0, dst);
+    dst = ggml_add(ctx0, ggml_repeat(ctx0, conv_b, dst), dst);
+    dst = ggml_cont(ctx0, ggml_transpose(ctx0, dst));
+
+    return dst;
+
+    // int kernel_size   = conv_w->ne[0];
+    // int padding_total = kernel_size - stride;
+
+    // int padding_right = ceilf(padding_total);
+    // int padding_left = padding_total - padding_right;
+
+    // struct ggml_tensor * unpadded = unpad_1d(ctx0, dst, padding_left, padding_right);
+    // unpadded = ggml_cont(ctx0, unpadded);
+
+    // return unpadded;
+}
+
 static struct ggml_tensor * forward_pass_lstm_unilayer(
             struct ggml_context * ctx0,
              struct ggml_allocr * allocr,
@@ -224,31 +271,6 @@ static struct ggml_tensor * forward_pass_lstm_unilayer(
     hs = ggml_cont(ctx0, ggml_transpose(ctx0, hs));
 
     return hs;
-}
-
-static struct ggml_tensor * strided_conv_transpose_1d(
-                ggml_context * ctx0,
-                ggml_tensor * inp,
-                ggml_tensor * conv_w,
-                ggml_tensor * conv_b,
-                        int   stride) {
-    int kernel_size   = conv_w->ne[0];
-    int padding_total = kernel_size - stride;
-
-    struct ggml_tensor * dst = ggml_conv_transpose_1d(ctx0, conv_w, inp, stride, 0, 1);
-
-    // add bias
-    dst = ggml_transpose(ctx0, dst);
-    dst = ggml_add(ctx0, ggml_repeat(ctx0, conv_b, dst), dst);
-    dst = ggml_cont(ctx0, ggml_transpose(ctx0, dst));
-
-    int padding_right = ceilf(padding_total);
-    int padding_left = padding_total - padding_right;
-
-    struct ggml_tensor * unpadded = unpad_1d(ctx0, dst, padding_left, padding_right);
-    unpadded = ggml_cont(ctx0, unpadded);
-
-    return unpadded;
 }
 
 bool encodec_load_model_weights(const std::string& fname, encodec_model& model) {
