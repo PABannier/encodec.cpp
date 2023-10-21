@@ -1,13 +1,29 @@
+#include <cstdint>
+#include <fstream>
+#include <iostream>
 #include <string>
 #include <thread>
 #include <vector>
 
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
+#include "json.hpp"
 
 #include "common.h"
 
 #define SAMPLE_RATE 24000
+#define BITS_PER_CODEBOOK 10    // int(log2(quantizer.bins)); quantizer.bins = 1024
+
+#define ENCODEC_MAGIC 'ECDC'
+
+
+#pragma pack(push, 1)   //  exact fit - no padding
+struct encodec_file_header {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t meta_length;
+};
+#pragma pack(pop)        // back to whatever the previous packing mode was
 
 
 void encodec_print_usage(char ** argv, const encodec_params & params) {
@@ -87,4 +103,78 @@ void write_wav_on_disk(std::vector<float>& audio_arr, std::string dest_path) {
     drwav_uninit(&wav);
 
     fprintf(stderr, "%s: Number of frames written = %lld.\n", __func__, frames);
+}
+
+class BitPacker {
+    public:
+        // Constructor
+        BitPacker(int bits, std::ofstream& fo)
+            : current_value(0), current_bits(0), bits(bits), fo(fo) {}
+
+        // Member function to push a new value to the stream
+        void push(int value) {
+            current_value += (value << current_bits);
+            current_bits += bits;
+            while (current_bits >= 8) {
+                uint8_t lower_8bits = current_value & 0xff;
+                current_bits -= 8;
+                current_value >>= 8;
+                fo.write(reinterpret_cast<char*>(&lower_8bits), sizeof(lower_8bits));
+            }
+        }
+
+        // Member function to flush the remaining partial uint8
+        void flush() {
+            if (current_bits) {
+                fo.write(reinterpret_cast<char*>(&current_value), sizeof(uint8_t));
+                current_value = 0;
+                current_bits = 0;
+            }
+            fo.flush();
+        }
+
+    private:
+        int current_value;
+        int current_bits;
+        int bits;
+        std::ofstream & fo;
+};
+
+void write_encodec_header(std::ofstream & fo, std::vector<int32_t> & codes) {
+    assert(codes.size() % 32 == 0);  // codes.size() must be a multiple of 32 (32 codebooks)
+
+    uint32_t audio_length = codes.size() / 32;
+    nlohmann::json metadata = {
+        {"model_name"  , "encodec_24khz"},
+        {"audio_length",    audio_length},
+        {"n_codebooks" ,              32},
+        {"use_lm"      ,           false},
+    };
+    std::string meta_dumped = metadata.dump();
+
+    encodec_file_header header;
+    header.magic = ENCODEC_MAGIC;
+    header.version = 0;
+    header.meta_length = static_cast<uint32_t>(meta_dumped.size());
+
+    fo.write(reinterpret_cast<char *>(&header), sizeof(header));
+    fo.write(meta_dumped.c_str(), meta_dumped.size());
+    fo.flush();
+}
+
+void write_encodec_codes(std::ofstream & fo, std::vector<int32_t> & codes) {
+    BitPacker bp(BITS_PER_CODEBOOK, fo);
+    for (int32_t code : codes) {
+        bp.push(code);
+    }
+    bp.flush();
+}
+
+bool write_codes_to_file(std::string dest_path, std::vector<int32_t> & codes) {
+    std::ofstream fo(dest_path, std::ios::binary);
+    write_encodec_header(fo, codes);
+    write_encodec_codes(fo, codes);
+    fo.close();
+
+    return true;
 }
