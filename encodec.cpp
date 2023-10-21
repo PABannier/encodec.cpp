@@ -982,7 +982,7 @@ struct ggml_cgraph * encodec_build_graph(
     struct ggml_tensor * encoded_inp = encodec_forward_encoder(ectx, ctx0, inp);
     struct ggml_tensor * codes       = encodec_forward_quantizer_encode(ectx, ctx0, encoded_inp);
     struct ggml_tensor * quantized   = encodec_forward_quantizer_decode(ectx, ctx0, codes);
-    struct ggml_tensor * decoded = encodec_forward_decoder(ectx, ctx0, quantized);
+    struct ggml_tensor * decoded     = encodec_forward_decoder(ectx, ctx0, quantized);
 
     switch(mode) {
         case encodec_run_mode::full:
