@@ -52,10 +52,11 @@ void write_wav_on_disk(std::vector<float>& audio_arr, std::string dest_path);
  *
  * @param dest_path Path to the output file.
  * @param codes Vector containing the integers to write.
+ * @param audio_length Original length of the audio.
  * @return true If the file was successfully written.
  * @return false If the file could not be written.
  */
-bool write_codes_to_file(std::string dest_path, std::vector<int32_t> & codes);
+bool write_codes_to_file(std::string dest_path, std::vector<int32_t> & codes, uint32_t audio_length);
 
 /**
  * @brief Reads a vector of integers from a file on disk.

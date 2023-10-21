@@ -15,17 +15,25 @@
 #define SAMPLE_RATE 24000
 #define BITS_PER_CODEBOOK 10    // int(log2(quantizer.bins)); quantizer.bins = 1024
 
-#define ENCODEC_MAGIC 'ECDC'
 
+// The ECDC file format expects big endian byte order.
+// This function swaps the endianness of a 32-bit integer.
+uint32_t swap_endianness(uint32_t value) {
+    return ((value & 0x000000FF) << 24) |
+           ((value & 0x0000FF00) << 8) |
+           ((value & 0x00FF0000) >> 8) |
+           ((value & 0xFF000000) >> 24);
+}
 
-#pragma pack(push, 1)   //  exact fit - no padding
-struct encodec_file_header {
-    uint32_t magic;
-    uint8_t  version;
-    uint32_t meta_length;
-};
-#pragma pack(pop)        // back to whatever the previous packing mode was
+// This checks if the system is in big-endian or little-endian order.
+bool is_big_endian(void) {
+    union {
+        uint32_t i;
+        char c[4];
+    } bint = {0x01020304};
 
+    return bint.c[0] == 1;
+}
 
 void encodec_print_usage(char ** argv, const encodec_params & params) {
     fprintf(stderr, "usage: %s [options]\n", argv[0]);
@@ -192,25 +200,29 @@ std::vector<char> read_exactly(std::ifstream& fo, size_t size) {
     return buf;
 }
 
-void write_encodec_header(std::ofstream & fo, std::vector<int32_t> & codes) {
-    assert(codes.size() % 32 == 0);  // codes.size() must be a multiple of 32 (32 codebooks)
-
-    uint32_t audio_length = codes.size() / 32;
+void write_encodec_header(std::ofstream & fo, uint32_t audio_length) {
     nlohmann::json metadata = {
-        {"model_name"  , "encodec_24khz"},
-        {"audio_length",    audio_length},
-        {"n_codebooks" ,              32},
-        {"use_lm"      ,           false},
+        {"m" , "encodec_24khz"},
+        {"al",    audio_length},
+        {"nc",              16},
+        {"lm",           false},
     };
     std::string meta_dumped = metadata.dump();
 
-    encodec_file_header header;
-    header.magic = ENCODEC_MAGIC;
-    header.version = 0;
-    header.meta_length = static_cast<uint32_t>(meta_dumped.size());
+    char magic[4] = { 'E', 'C', 'D', 'C'};
+    uint8_t version = 0;
 
-    fo.write(reinterpret_cast<char *>(&header), sizeof(header));
-    fo.write(meta_dumped.c_str(), meta_dumped.size());
+    uint32_t meta_length = static_cast<uint32_t>(meta_dumped.size());
+    if (!is_big_endian()) {
+        // if little endian, needs to swap to big-endian order for correct ECDC format.
+        meta_length = swap_endianness(meta_length);
+    }
+
+    fo.write(magic, 4);
+    fo.write(reinterpret_cast<char*>(&version), sizeof(version));
+    fo.write(reinterpret_cast<char*>(&meta_length), sizeof(uint32_t));
+
+    fo.write(meta_dumped.data(), meta_dumped.size());
     fo.flush();
 }
 
@@ -218,11 +230,11 @@ nlohmann::json read_ecdc_header(std::ifstream& fo) {
     int size_header = 4 * sizeof(char) + sizeof(uint8_t) + sizeof(uint32_t);
     std::vector<char> header_bytes = read_exactly(fo, size_header);
 
-    int32_t  * magic       = reinterpret_cast<int32_t*>(header_bytes.data(), header_bytes.data() + 4*sizeof(char));
+    char  * magic          = reinterpret_cast<char*>(header_bytes.data(), header_bytes.data() + 4*sizeof(char));
     uint8_t  * version     = reinterpret_cast<uint8_t*>(header_bytes.data() + 4*sizeof(char));
     uint32_t * meta_length = reinterpret_cast<uint32_t*>(header_bytes.data() + 4*sizeof(char) + sizeof(uint8_t));
 
-    if (*magic != ENCODEC_MAGIC) {
+    if (strcmp(magic, "ECDC") != 0) {
         throw std::runtime_error("File is not in ECDC format.");
     }
     if (*version != 0) {
@@ -242,9 +254,9 @@ void write_encodec_codes(std::ofstream & fo, std::vector<int32_t> & codes) {
     bp.flush();
 }
 
-bool write_codes_to_file(std::string dest_path, std::vector<int32_t> & codes) {
+bool write_codes_to_file(std::string dest_path, std::vector<int32_t> & codes, uint32_t audio_length) {
     std::ofstream fo(dest_path, std::ios::binary);
-    write_encodec_header(fo, codes);
+    write_encodec_header(fo, audio_length);
     write_encodec_codes(fo, codes);
     fo.close();
 
