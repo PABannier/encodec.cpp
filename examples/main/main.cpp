@@ -27,7 +27,7 @@ int main(int argc, char **argv) {
 
     // read audio from disk
     std::vector<float> original_audio_arr;
-    if(!read_wav_from_disk(params.original_audio_path, original_audio_arr)) {
+    if(!read_wav_from_disk(params.input_path, original_audio_arr)) {
         printf("%s: error during reading wav file\n", __func__);
         return 1;
     }
@@ -40,7 +40,7 @@ int main(int argc, char **argv) {
 
     // write reconstructed audio on disk
     auto & audio_arr = ectx->out_audio;
-    write_wav_on_disk(audio_arr, params.dest_wav_path);
+    write_wav_on_disk(audio_arr, params.output_path);
 
     // report timing
     {
