@@ -6,59 +6,6 @@
 #include "encodec.h"
 #include "common.h"
 
-struct encodec_params {
-    // number of threads for inference
-    int32_t n_threads = std::min(4, (int32_t) std::thread::hardware_concurrency());
-
-    // weights location
-    std::string model_path = "/Users/pbannier/Documents/encodec.cpp/ggml_weights/ggml-model.bin";
-
-    // input location
-    std::string original_audio_path = "/Users/pbannier/Documents/encodec/decomp_24khz_True.wav";
-
-    // output location
-    std::string dest_path = "output.bin";
-};
-
-void encodec_print_usage(char ** argv, const encodec_params & params) {
-    fprintf(stderr, "usage: %s [options]\n", argv[0]);
-    fprintf(stderr, "\n");
-    fprintf(stderr, "options:\n");
-    fprintf(stderr, "  -h, --help            show this help message and exit\n");
-    fprintf(stderr, "  -t N, --threads N     number of threads to use during computation (default: %d)\n", params.n_threads);
-    fprintf(stderr, "  -m FNAME, --model FNAME\n");
-    fprintf(stderr, "                        model path (default: %s)\n", params.model_path.c_str());
-    fprintf(stderr, "  -i FNAME, --input FNAME\n");
-    fprintf(stderr, "                        original audio wav (default: %s)\n", params.original_audio_path.c_str());
-    fprintf(stderr, "  -o FNAME, --output FNAME\n");
-    fprintf(stderr, "                        output compressed audio (default: %s)\n", params.dest_path.c_str());
-    fprintf(stderr, "\n");
-}
-
-int encodec_params_parse(int argc, char ** argv, encodec_params & params) {
-    for (int i = 1; i < argc; i++) {
-        std::string arg = argv[i];
-
-        if (arg == "-t" || arg == "--threads") {
-            params.n_threads = std::stoi(argv[++i]);
-        } else if (arg == "-m" || arg == "--model") {
-            params.model_path = argv[++i];
-        } else if (arg == "-o" || arg == "--output") {
-            params.dest_path = argv[++i];
-        } else if (arg == "-i" || arg == "--input") {
-            params.original_audio_path = argv[++i];
-        } else if (arg == "-h" || arg == "--help") {
-            encodec_print_usage(argv, params);
-            exit(0);
-        } else {
-            fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
-            encodec_print_usage(argv, params);
-            exit(0);
-        }
-    }
-
-    return 0;
-}
 
 int main(int argc, char **argv) {
     ggml_time_init();
