@@ -16,11 +16,11 @@
 
 typedef enum {
     // Run the end-to-end encoder-decoder pipeline
-    full,
+    full        = 0,
     // Encode an audio (encoder + quantizer encode)
-    encode_only,
+    encode_only = 1,
     // Decode an audio from a compressed representation (quantizer decode + decoder)
-    decode_only,
+    decode_only = 2,
 } encodec_run_mode;
 
 void print_tensor(struct ggml_tensor * a) {
@@ -664,13 +664,272 @@ bool encodec_load_model_weights(const std::string& fname, encodec_model& model) 
     return true;
 }
 
-struct ggml_cgraph * encodec_graph(
-              struct encodec_context * ectx,
-            const std::vector<float> & inp_audio,
-              const encodec_run_mode   mode) {
-    const int N = inp_audio.size();
+struct ggml_tensor * encodec_forward_encoder(
+               struct encodec_context * ectx,
+                  struct ggml_context * ctx0,
+                   struct ggml_tensor * inp) {
+    if (!inp) {
+        fprintf(stderr, "%s: null input tensor\n", __func__);
+        return NULL;
+    }
 
     const auto & model = ectx->model;
+    const auto & hparams = model.hparams;
+
+    const int * ratios      = hparams.ratios;
+    const int kernel_size   = hparams.kernel_size;
+    const int res_kernel_sz = hparams.residual_kernel_size;
+    const int stride        = hparams.stride;
+
+    struct ggml_tensor * inpL = strided_conv_1d(
+        ctx0, inp, model.encoder.init_conv_w, model.encoder.init_conv_b, stride);
+
+    for (int layer_ix = 0; layer_ix < 4; layer_ix++) {
+        encodec_encoder_block block = model.encoder.blocks[layer_ix];
+
+        struct ggml_tensor * current = inpL;
+
+        // shortcut
+        struct ggml_tensor * shortcut = strided_conv_1d(
+            ctx0, inpL, block.conv_sc_w, block.conv_sc_b, stride);
+
+        // conv1
+        current = ggml_elu(ctx0, current);
+
+        current = strided_conv_1d(
+            ctx0, current, block.conv_1_w, block.conv_1_b, stride);
+
+        // conv2
+        current = ggml_elu(ctx0, current);
+
+        current = strided_conv_1d(
+            ctx0, current, block.conv_2_w, block.conv_2_b, stride);
+
+        // residual connection
+        inpL = ggml_add(ctx0, current, shortcut);
+
+        // downsampling layers
+        inpL = ggml_elu(ctx0, inpL);
+
+        inpL = strided_conv_1d(
+            ctx0, inpL, block.ds_conv_w, block.ds_conv_b, ratios[3-layer_ix]);
+    }
+
+    // lstm
+    {
+        struct ggml_tensor * cur = inpL;
+
+        const encodec_lstm lstm = model.encoder.lstm;
+
+        // first lstm layer
+        struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(
+            ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
+
+        // second lstm layer
+        struct ggml_tensor * out = forward_pass_lstm_unilayer(
+            ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
+
+        inpL = ggml_add(ctx0, inpL, out);
+    }
+
+    // final conv
+    inpL = ggml_elu(ctx0, inpL);
+
+    struct ggml_tensor * encoded_inp = strided_conv_1d(
+        ctx0, inpL, model.encoder.final_conv_w, model.encoder.final_conv_b, stride);
+
+    return encoded_inp;
+}
+
+struct ggml_tensor * encodec_forward_quantizer_encode(
+               struct encodec_context * ectx,
+                  struct ggml_context * ctx0,
+                   struct ggml_tensor * encoded_inp) {
+    if (!encoded_inp) {
+        fprintf(stderr, "%s: null input tensor\n", __func__);
+        return NULL;
+    }
+
+    const auto & model = ectx->model;
+    const auto & hparams = model.hparams;
+
+    const int n_q = hparams.n_q;
+    assert(n_q == 16);
+
+    const int seq_length = encoded_inp->ne[0];
+
+    struct ggml_tensor * codes = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, seq_length, n_q);
+
+    struct ggml_tensor * inpL = ggml_cont(ctx0, ggml_transpose(ctx0, encoded_inp));
+    struct ggml_tensor * residual = inpL;
+    struct ggml_tensor * indices;
+
+    for (int i = 0; i < n_q; i++) {
+        encodec_quant_block block = model.quantizer.blocks[i];
+
+        // compute distance
+        // [seq_length, n_bins]
+        struct ggml_tensor * dp = ggml_scale(
+                ctx0, ggml_mul_mat(ctx0, block.embed, residual), ggml_new_f32(ctx0, -2.0f));
+
+        // [n_bins]
+        struct ggml_tensor * sqr_embed     = ggml_sqr(ctx0, block.embed);
+        struct ggml_tensor * sqr_embed_nrm = ggml_sum_rows(ctx0, sqr_embed);
+
+        // [seq_length]
+        struct ggml_tensor * sqr_inp     = ggml_sqr(ctx0, residual);
+        struct ggml_tensor * sqr_inp_nrm = ggml_sum_rows(ctx0, sqr_inp);
+
+        // [seq_length, n_bins]
+        struct ggml_tensor * dist = ggml_add(ctx0, ggml_repeat(ctx0, sqr_inp_nrm, dp), dp);
+        dist = ggml_add(ctx0, ggml_repeat(ctx0, ggml_transpose(ctx0, sqr_embed_nrm), dist), dist);
+        dist = ggml_scale(ctx0, dist, ggml_new_f32(ctx0, -1.0f));
+
+        // take the argmax over the column dimension
+        // [seq_length]
+        indices = ggml_argmax(ctx0, dist);
+
+        // look up in embedding table
+        struct ggml_tensor * quantized = ggml_get_rows(ctx0, block.embed, indices);
+
+        residual = ggml_sub(ctx0, residual, quantized);
+
+        codes = ggml_set_1d(ctx0, codes, indices, i*codes->nb[1]);
+    }
+
+    return codes;
+}
+
+struct ggml_tensor * encodec_forward_quantizer_decode(
+               struct encodec_context * ectx,
+                  struct ggml_context * ctx0,
+                   struct ggml_tensor * codes) {
+    if (!codes) {
+        fprintf(stderr, "%s: null input tensor\n", __func__);
+        return NULL;
+    }
+
+    const auto & model   = ectx->model;
+    const auto & hparams = model.hparams;
+    const auto & allocr  = ectx->allocr;
+
+    const int hidden_dim = hparams.hidden_dim;
+    const int n_q        = hparams.n_q;
+    const int seq_length = codes->ne[0];
+
+    assert(n_q == codes->ne[1]);
+
+    struct ggml_tensor * quantized_out;
+
+    quantized_out = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
+    if (!ggml_allocr_is_measure(allocr)) {
+        quantized_out = ggml_set_zero(quantized_out);
+    }
+
+    for (int i = 0; i < n_q; i++) {
+        encodec_quant_block block = model.quantizer.blocks[i];
+
+        struct ggml_tensor * indices   = ggml_view_1d(ctx0, codes, seq_length, i*codes->nb[1]);
+        struct ggml_tensor * quantized = ggml_get_rows(ctx0, block.embed, indices);
+
+        quantized_out = ggml_add(ctx0, quantized_out, quantized);
+    }
+
+    quantized_out = ggml_cont(ctx0, ggml_transpose(ctx0, quantized_out));
+
+    return quantized_out;
+}
+
+struct ggml_tensor * encodec_forward_decoder(
+               struct encodec_context * ectx,
+                  struct ggml_context * ctx0,
+                   struct ggml_tensor * quantized_out) {
+    if (!quantized_out) {
+        fprintf(stderr, "%s: null input tensor\n", __func__);
+        return NULL;
+    }
+
+    const auto & model = ectx->model;
+    const auto & hparams = model.hparams;
+
+    const int * ratios      = hparams.ratios;
+    const int kernel_size   = hparams.kernel_size;
+    const int res_kernel_sz = hparams.residual_kernel_size;
+    const int stride        = hparams.stride;
+
+    struct ggml_tensor * inpL = strided_conv_1d(
+        ctx0, quantized_out, model.decoder.init_conv_w,
+        model.decoder.init_conv_b, stride);
+
+    // lstm
+    {
+        struct ggml_tensor * cur = inpL;
+
+        const encodec_lstm lstm = model.decoder.lstm;
+
+        // first lstm layer
+        struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(
+            ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
+
+        // second lstm layer
+        struct ggml_tensor * out = forward_pass_lstm_unilayer(
+            ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
+
+        inpL = ggml_add(ctx0, inpL, out);
+    }
+
+    for (int layer_ix = 0; layer_ix < 4; layer_ix++) {
+        encodec_decoder_block block = model.decoder.blocks[layer_ix];
+
+        // upsampling layers
+        inpL = ggml_elu(ctx0, inpL);
+
+        inpL = strided_conv_transpose_1d(
+            ctx0, inpL, block.us_conv_w, block.us_conv_b, ratios[layer_ix]);
+
+        struct ggml_tensor * current = inpL;
+
+        // shortcut
+        struct ggml_tensor * shortcut = strided_conv_1d(
+            ctx0, inpL, block.conv_sc_w, block.conv_sc_b, stride);
+
+        // conv1
+        current = ggml_elu(ctx0, current);
+
+        current = strided_conv_1d(
+            ctx0, current, block.conv_1_w, block.conv_1_b, stride);
+
+        // conv2
+        current = ggml_elu(ctx0, current);
+
+        current = strided_conv_1d(
+            ctx0, current, block.conv_2_w, block.conv_2_b, stride);
+
+        // residual connection
+        inpL = ggml_add(ctx0, current, shortcut);
+    }
+
+    // final conv
+    inpL = ggml_elu(ctx0, inpL);
+
+    struct ggml_tensor * decoded_inp = strided_conv_1d(
+            ctx0, inpL, model.decoder.final_conv_w, model.decoder.final_conv_b, stride);
+
+    return decoded_inp;
+}
+
+struct ggml_cgraph * encodec_build_graph(
+        struct encodec_context * ectx,
+            std::vector<float> & inp_audio,
+        const encodec_run_mode   mode) {
+    const auto & model = ectx->model;
+    const auto & hparams = model.hparams;
+
+    // originally, n_q = n_q or len(self.layers)
+    // for this model, n_q is at most 32, but the implementation we are comparing
+    // our model against has only 16, hence we hardcode 16 as n_q for now.
+    const int n_q = hparams.n_q;
+    assert(n_q == 16);
 
     auto & allocr = ectx->allocr;
 
@@ -689,7 +948,11 @@ struct ggml_cgraph * encodec_graph(
 
     struct ggml_cgraph * gf = ggml_new_graph(ctx0);
 
-    struct ggml_tensor * inp = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, N);
+    struct ggml_tensor * inp;
+
+    const int N = inp_audio.size();
+
+    inp = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, N);
     ggml_allocr_alloc(allocr, inp);
 
     // avoid writing to tensors if we are only measuring the memory usage
@@ -697,236 +960,36 @@ struct ggml_cgraph * encodec_graph(
         ggml_backend_tensor_set(inp, inp_audio.data(), 0, N*ggml_element_size(inp));
     }
 
-    // encoder
-    struct ggml_tensor * encoded_inp;
-    {
-        const auto & hparams = model.hparams;
+    struct ggml_tensor * encoded_inp = encodec_forward_encoder(ectx, ctx0, inp);
+    struct ggml_tensor * codes       = encodec_forward_quantizer_encode(ectx, ctx0, encoded_inp);
+    struct ggml_tensor * quantized   = encodec_forward_quantizer_decode(ectx, ctx0, codes);
+    struct ggml_tensor * decoded = encodec_forward_decoder(ectx, ctx0, quantized);
 
-        const int * ratios      = hparams.ratios;
-        const int kernel_size   = hparams.kernel_size;
-        const int res_kernel_sz = hparams.residual_kernel_size;
-        const int stride        = hparams.stride;
-
-        struct ggml_tensor * inpL = strided_conv_1d(
-            ctx0, inp, model.encoder.init_conv_w, model.encoder.init_conv_b, stride);
-
-        for (int layer_ix = 0; layer_ix < 4; layer_ix++) {
-            encodec_encoder_block block = model.encoder.blocks[layer_ix];
-
-            struct ggml_tensor * current = inpL;
-
-            // shortcut
-            struct ggml_tensor * shortcut = strided_conv_1d(
-                ctx0, inpL, block.conv_sc_w, block.conv_sc_b, stride);
-
-            // conv1
-            current = ggml_elu(ctx0, current);
-
-            current = strided_conv_1d(
-                ctx0, current, block.conv_1_w, block.conv_1_b, stride);
-
-            // conv2
-            current = ggml_elu(ctx0, current);
-
-            current = strided_conv_1d(
-                ctx0, current, block.conv_2_w, block.conv_2_b, stride);
-
-            // residual connection
-            inpL = ggml_add(ctx0, current, shortcut);
-
-            // downsampling layers
-            inpL = ggml_elu(ctx0, inpL);
-
-            inpL = strided_conv_1d(
-                ctx0, inpL, block.ds_conv_w, block.ds_conv_b, ratios[3-layer_ix]);
-        }
-
-        // lstm
-        {
-            struct ggml_tensor * cur = inpL;
-
-            const encodec_lstm lstm = model.encoder.lstm;
-
-            // first lstm layer
-            struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(
-                ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
-
-            // second lstm layer
-            struct ggml_tensor * out = forward_pass_lstm_unilayer(
-                ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
-
-            inpL = ggml_add(ctx0, inpL, out);
-        }
-
-        // final conv
-        {
-            inpL = ggml_elu(ctx0, inpL);
-
-            encoded_inp = strided_conv_1d(
-                ctx0, inpL, model.encoder.final_conv_w, model.encoder.final_conv_b, stride);
-        }
+    switch(mode) {
+        case encodec_run_mode::full:
+            {
+                ggml_build_forward_expand(gf, decoded);
+            } break;
+        case encodec_run_mode::encode_only:
+            {
+                ggml_build_forward_expand(gf, codes);
+            } break;
+        default:
+            {
+                fprintf(stderr, "%s: unknown run mode\n", __func__);
+                return NULL;
+            } break;
     }
-
-    // quantizer (encode)
-    struct ggml_tensor * codes;
-    {
-        const auto & hparams = model.hparams;
-        // originally, n_q = n_q or len(self.layers)
-        // for this model, n_q is at most 32, but the implementation we are comparing
-        // our model against has only 16, hence we hardcode 16 as n_q for now.
-        // const int n_q = hparams.n_q;
-        const int n_q = 16;
-
-        const int seq_length = encoded_inp->ne[0];
-        codes = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, seq_length, n_q);
-
-        struct ggml_tensor * inpL = ggml_cont(ctx0, ggml_transpose(ctx0, encoded_inp));
-        struct ggml_tensor * residual = inpL;
-        struct ggml_tensor * indices;
-
-        for (int i = 0; i < n_q; i++) {
-            encodec_quant_block block = model.quantizer.blocks[i];
-
-            // compute distance
-            // [seq_length, n_bins]
-            struct ggml_tensor * dp = ggml_scale(
-                    ctx0, ggml_mul_mat(ctx0, block.embed, residual), ggml_new_f32(ctx0, -2.0f));
-
-            // [n_bins]
-            struct ggml_tensor * sqr_embed     = ggml_sqr(ctx0, block.embed);
-            struct ggml_tensor * sqr_embed_nrm = ggml_sum_rows(ctx0, sqr_embed);
-
-            // [seq_length]
-            struct ggml_tensor * sqr_inp     = ggml_sqr(ctx0, residual);
-            struct ggml_tensor * sqr_inp_nrm = ggml_sum_rows(ctx0, sqr_inp);
-
-            // [seq_length, n_bins]
-            struct ggml_tensor * dist = ggml_add(ctx0, ggml_repeat(ctx0, sqr_inp_nrm, dp), dp);
-            dist = ggml_add(ctx0, ggml_repeat(ctx0, ggml_transpose(ctx0, sqr_embed_nrm), dist), dist);
-            dist = ggml_scale(ctx0, dist, ggml_new_f32(ctx0, -1.0f));
-
-            // take the argmax over the column dimension
-            // [seq_length]
-            indices = ggml_argmax(ctx0, dist);
-
-            // look up in embedding table
-            struct ggml_tensor * quantized = ggml_get_rows(ctx0, block.embed, indices);
-
-            residual = ggml_sub(ctx0, residual, quantized);
-
-            codes = ggml_set_1d(ctx0, codes, indices, i*codes->nb[1]);
-        }
-
-    }
-
-    // quantizer (decode)
-    struct ggml_tensor * quantized_out;
-    {
-        const auto & hparams = model.hparams;
-        const int hidden_dim = hparams.hidden_dim;
-
-        const int seq_length = codes->ne[0];
-        const int n_q        = codes->ne[1];
-
-        quantized_out = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
-        // if (!ggml_allocr_is_measure(ectx.allocr)) {
-        //     quantized_out = ggml_set_zero(quantized_out);
-        // }
-
-        for (int i = 0; i < n_q; i++) {
-            encodec_quant_block block = model.quantizer.blocks[i];
-
-            struct ggml_tensor * indices   = ggml_view_1d(ctx0, codes, seq_length, i*codes->nb[1]);
-            struct ggml_tensor * quantized = ggml_get_rows(ctx0, block.embed, indices);
-
-            quantized_out = ggml_add(ctx0, quantized_out, quantized);
-        }
-
-        quantized_out = ggml_cont(ctx0, ggml_transpose(ctx0, quantized_out));
-    }
-
-    // decoder
-    struct ggml_tensor * decoded_inp;
-    struct ggml_tensor * out;
-    {
-        const auto & hparams = model.hparams;
-
-        const int * ratios      = hparams.ratios;
-        const int kernel_size   = hparams.kernel_size;
-        const int res_kernel_sz = hparams.residual_kernel_size;
-        const int stride        = hparams.stride;
-
-        struct ggml_tensor * inpL = strided_conv_1d(
-            ctx0, quantized_out, model.decoder.init_conv_w,
-            model.decoder.init_conv_b, stride);
-
-        // lstm
-        {
-            struct ggml_tensor * cur = inpL;
-
-            const encodec_lstm lstm = model.decoder.lstm;
-
-            // first lstm layer
-            struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(
-                ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
-
-            // second lstm layer
-            struct ggml_tensor * out = forward_pass_lstm_unilayer(
-                ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
-
-            inpL = ggml_add(ctx0, inpL, out);
-        }
-
-        for (int layer_ix = 0; layer_ix < 4; layer_ix++) {
-            encodec_decoder_block block = model.decoder.blocks[layer_ix];
-
-            // upsampling layers
-            inpL = ggml_elu(ctx0, inpL);
-
-            inpL = strided_conv_transpose_1d(
-                ctx0, inpL, block.us_conv_w, block.us_conv_b, ratios[layer_ix]);
-
-            struct ggml_tensor * current = inpL;
-
-            // shortcut
-            struct ggml_tensor * shortcut = strided_conv_1d(
-                ctx0, inpL, block.conv_sc_w, block.conv_sc_b, stride);
-
-            // conv1
-            current = ggml_elu(ctx0, current);
-
-            current = strided_conv_1d(
-                ctx0, current, block.conv_1_w, block.conv_1_b, stride);
-
-            // conv2
-            current = ggml_elu(ctx0, current);
-
-            current = strided_conv_1d(
-                ctx0, current, block.conv_2_w, block.conv_2_b, stride);
-
-            // residual connection
-            inpL = ggml_add(ctx0, current, shortcut);
-        }
-
-        // final conv
-        {
-            inpL = ggml_elu(ctx0, inpL);
-
-            decoded_inp = strided_conv_1d(
-                ctx0, inpL, model.decoder.final_conv_w, model.decoder.final_conv_b, stride);
-        }
-
-        out = decoded_inp;
-    }
-
-    ggml_build_forward_expand(gf, out);
 
     ggml_free(ctx0);
+
+    ectx->codes = codes;
+    ectx->decoded = decoded;
 
     return gf;
 }
 
-bool encodec_eval(
+bool encodec_eval_internal(
         struct encodec_context * ectx,
             std::vector<float> & raw_audio,
                      const int   n_threads,
@@ -937,7 +1000,7 @@ bool encodec_eval(
     // reset the allocator to free all the memory allocated during the previous inference
     ggml_allocr_reset(allocr);
 
-    struct ggml_cgraph * gf = encodec_graph(ectx, raw_audio, mode);
+    struct ggml_cgraph * gf = encodec_build_graph(ectx, raw_audio, mode);
 
     // allocate tensors
     ggml_allocr_alloc_graph(allocr, gf);
@@ -948,15 +1011,43 @@ bool encodec_eval(
     }
     ggml_backend_graph_compute(model.backend, gf);
 
-    // reconstructed audio is the last one in the graph
-    struct ggml_tensor * out = gf->nodes[gf->n_nodes - 1];
+    return true;
+}
 
-    auto & out_audio = ectx->out_audio;
+bool encodec_eval(
+            struct encodec_context * ectx,
+                std::vector<float> & raw_audio,
+                         const int   n_threads,
+            const encodec_run_mode   mode) {
+    const int64_t t_start_ms = ggml_time_ms();
 
-    int out_length = out->ne[0];
-    out_audio.resize(out_length);
+    // allocate the compute buffer
+    {
+        // alignment required by the backend
+        size_t align = ggml_backend_get_alignment(ectx->model.backend);
+        ectx->allocr = ggml_allocr_new_measure(align);
 
-    ggml_backend_tensor_get(out, out_audio.data(), 0, out_length*ggml_element_size(out));
+        // create the graph for memory usage estimation
+        struct ggml_cgraph * gf = encodec_build_graph(ectx, raw_audio, mode);
+
+        // compute the required memory
+        size_t mem_size = ggml_allocr_alloc_graph(ectx->allocr, gf);
+
+        // recreate the allocator with the required memory
+        ggml_allocr_free(ectx->allocr);
+        ectx->buf_compute = ggml_backend_alloc_buffer(ectx->model.backend, mem_size);
+        ectx->allocr = ggml_allocr_new_from_buffer(ectx->buf_compute);
+
+        fprintf(stderr, "%s: compute buffer size: %.2f MB\n\n", __func__, mem_size/1024.0/1024.0);
+    }
+
+    // encodec eval
+    if (!encodec_eval_internal(ectx, raw_audio, n_threads, mode)) {
+        fprintf(stderr, "%s: failed to run encodec eval\n", __func__);
+        return false;
+    }
+
+    ectx->t_compute_ms = ggml_time_ms() - t_start_ms;
 
     return true;
 }
@@ -965,37 +1056,24 @@ bool encodec_reconstruct_audio(
             struct encodec_context * ectx,
                 std::vector<float> & raw_audio,
                                int   n_threads) {
-    const int64_t t_start_ms = ggml_time_ms();
-
-    // allocate the compute buffer
-    {
-        // alignment required by the backend
-        size_t align = ggml_backend_get_alignment(ectx->model.backend);
-        ectx->allocr = ggml_allocr_new_measure(align);
-
-        // create the graph for memory usage estimation
-        struct ggml_cgraph * gf = encodec_graph(ectx, raw_audio, encodec_run_mode::full);
-
-        // compute the required memory
-        size_t mem_size = ggml_allocr_alloc_graph(ectx->allocr, gf);
-
-        // recreate the allocator with the required memory
-        ggml_allocr_free(ectx->allocr);
-        ectx->buf_compute = ggml_backend_alloc_buffer(ectx->model.backend, mem_size);
-        ectx->allocr = ggml_allocr_new_from_buffer(ectx->buf_compute);
-
-        fprintf(stderr, "%s: compute buffer size: %.2f MB\n", __func__, mem_size/1024.0/1024.0);
-    }
-
-    printf("\n\n");
-
-    // encodec eval
     if (!encodec_eval(ectx, raw_audio, n_threads, encodec_run_mode::full)) {
         fprintf(stderr, "%s: failed to run encodec eval\n", __func__);
         return false;
     }
 
-    ectx->t_compute_ms = ggml_time_ms() - t_start_ms;
+    if (!ectx->decoded) {
+        fprintf(stderr, "%s: null decoded tensor\n", __func__);
+        return false;
+    }
+
+    struct ggml_tensor * decoded = ectx->decoded;
+
+    auto & out_audio = ectx->out_audio;
+
+    int out_length = decoded->ne[0];
+    out_audio.resize(out_length);
+
+    ggml_backend_tensor_get(decoded, out_audio.data(), 0, out_length*ggml_element_size(decoded));
 
     return true;
 }
@@ -1004,37 +1082,24 @@ bool encodec_compress_audio(
             struct encodec_context * ectx,
                 std::vector<float> & raw_audio,
                                int   n_threads) {
-    const int64_t t_start_ms = ggml_time_ms();
-
-    // allocate the compute buffer
-    {
-        // alignment required by the backend
-        size_t align = ggml_backend_get_alignment(ectx->model.backend);
-        ectx->allocr = ggml_allocr_new_measure(align);
-
-        // create the graph for memory usage estimation
-        struct ggml_cgraph * gf = encodec_graph(ectx, raw_audio, encodec_run_mode::encode_only);
-
-        // compute the required memory
-        size_t mem_size = ggml_allocr_alloc_graph(ectx->allocr, gf);
-
-        // recreate the allocator with the required memory
-        ggml_allocr_free(ectx->allocr);
-        ectx->buf_compute = ggml_backend_alloc_buffer(ectx->model.backend, mem_size);
-        ectx->allocr = ggml_allocr_new_from_buffer(ectx->buf_compute);
-
-        fprintf(stderr, "%s: compute buffer size: %.2f MB\n", __func__, mem_size/1024.0/1024.0);
-    }
-
-    printf("\n\n");
-
-    // encodec eval
-    if (!encodec_eval(ectx, raw_audio, n_threads, encodec_run_mode::encode_only)) {
+    if(!encodec_eval(ectx, raw_audio, n_threads, encodec_run_mode::encode_only)) {
         fprintf(stderr, "%s: failed to run encodec eval\n", __func__);
         return false;
     }
 
-    ectx->t_compute_ms = ggml_time_ms() - t_start_ms;
+    if (!ectx->codes) {
+        fprintf(stderr, "%s: null codes tensor\n", __func__);
+        return false;
+    }
+
+    struct ggml_tensor * codes = ectx->codes;
+
+    auto & out_codes = ectx->out_codes;
+
+    int out_length = codes->ne[0]*codes->ne[1];
+    out_codes.resize(out_length);
+
+    ggml_backend_tensor_get(codes, out_codes.data(), 0, out_length*ggml_element_size(codes));
 
     return true;
 }
