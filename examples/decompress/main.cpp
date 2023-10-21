@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
     }
 
     // read compressed audio from disk
-    // TODO: read file
+    std::vector<int32_t> codes = read_codes_from_file(params.input_path);
 
     // decompress audio
     // TODO: decompress audio
