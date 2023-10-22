@@ -43,7 +43,7 @@ struct encodec_hparams {
     int32_t bandwidth = 24;
 
     // The number of codebooks.
-    int32_t n_q;
+    int32_t n_q = 32;
 
     int32_t ftype;
 };

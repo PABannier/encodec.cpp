@@ -1159,6 +1159,7 @@ struct encodec_context * encodec_load_model(const std::string & model_path) {
     }
 
     ectx->model.hparams.n_q = get_num_codebooks(bandwidth, hop_length, sr);
+    fprintf(stderr, "%s: n_q = %d\n", __func__, ectx->model.hparams.n_q);
 
     ectx->t_load_us = ggml_time_us() - t_start_load_us;
 
