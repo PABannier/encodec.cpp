@@ -13,6 +13,9 @@
 #include "ggml-backend.h"
 #include "encodec.h"
 
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
 
 typedef enum {
     // Run the end-to-end encoder-decoder pipeline
@@ -36,22 +39,24 @@ void print_tensor(struct ggml_tensor * a) {
                             float * aval = (float *) (
                                 (char *) a->data + i*a->nb[3] + j*a->nb[2] + k*a->nb[1] + l*a->nb[0]);
                             sum += *aval;
-                            maxv = *aval > maxv ? *aval : maxv;
-                            minv = *aval < minv ? *aval : minv;
+                            maxv = MAX(*aval, maxv);
+                            minv = MIN(*aval, minv);
                             // printf("%.4f ", *aval);
                         } else if (a->type == GGML_TYPE_F16) {
                             ggml_fp16_t * tmp = (ggml_fp16_t *) (
                                 (char *) a->data + i*a->nb[3] + j*a->nb[2] + k*a->nb[1] + l*a->nb[0]);
                             float aval = ggml_fp16_to_fp32(*tmp);
                             sum += aval;
-                            maxv = aval > maxv ? aval : maxv;
-                            minv = aval < minv ? aval : minv;
+                            maxv = MAX(aval, maxv);
+                            minv = MIN(aval, minv);
                             // printf("%.4f ", aval);
                         } else if (a->type == GGML_TYPE_I32) {
                             int32_t * aval = (int32_t *) (
                                 (char *) a->data + i*a->nb[3] + j*a->nb[2] + k*a->nb[1] + l*a->nb[0]);
                             sum += (float) *aval;
-                            printf("%d ", *aval);
+                            maxv = MAX((float) *aval, maxv);
+                            minv = MIN((float) *aval, minv);
+                            // printf("%d ", *aval);
                         } else {
                             throw std::runtime_error("Wrong tensor type.");
                         }
@@ -145,6 +150,16 @@ static int32_t get_num_codebooks(float bandwidth, int hop_length, float sample_r
     // Supported bandwidths are 1.5kbps (n_q = 2), 3 kbps (n_q = 4), 6 kbps (n_q = 8),
     // 12 kbps (n_q = 16) and 24kbps (n_q = 32).
     return (int32_t) ceilf(1000 * bandwidth / (ceilf(sample_rate / hop_length) * 10));
+}
+
+static int32_t get_bandwidth_per_quantizer(int bins, float frame_rate) {
+    return log2f((float) bins) * frame_rate;
+}
+
+static int32_t get_num_quantizers_for_bandwidth(int bins, float frame_rate, float bandwidth) {
+    float bw_per_q = get_bandwidth_per_quantizer(bins, frame_rate);
+    int32_t n_q = MAX(1, floorf(bandwidth * 1000 / bw_per_q));
+    return n_q;
 }
 
 static struct ggml_tensor * unpad_1d(
@@ -789,12 +804,26 @@ struct ggml_tensor * encodec_forward_quantizer_encode(
     const auto & hparams = model.hparams;
     const auto & allocr  = ectx->allocr;
 
-    const int n_q = hparams.n_q;
+    const int n_bins     = hparams.n_bins;
+    const int sr         = hparams.sr;
+    const int bandwidth  = hparams.bandwidth;
+    const int hop_length = hparams.hop_length;
+
+    const int frame_rate = (int) ceilf(sr / hop_length);
+    const int n_q = get_num_quantizers_for_bandwidth(n_bins, frame_rate, bandwidth);
 
     const int seq_length = encoded_inp->ne[0];
 
     struct ggml_tensor * codes = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, seq_length, n_q);
     ggml_allocr_alloc(allocr, codes);
+
+    struct ggml_tensor * dist_scale = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, 1);
+    ggml_allocr_alloc(allocr, dist_scale);
+
+    if (!ggml_allocr_is_measure(allocr)) {
+        float s = -2.0f;
+        ggml_backend_tensor_set(dist_scale, &s, 0, sizeof(s));
+    }
 
     struct ggml_tensor * inpL = ggml_cont(ctx0, ggml_transpose(ctx0, encoded_inp));
     struct ggml_tensor * residual = inpL;
@@ -806,20 +835,20 @@ struct ggml_tensor * encodec_forward_quantizer_encode(
         // compute distance
         // [seq_length, n_bins]
         struct ggml_tensor * dp = ggml_scale(
-                ctx0, ggml_mul_mat(ctx0, block.embed, residual), ggml_new_f32(ctx0, -2.0f));
+                ctx0, ggml_mul_mat(ctx0, block.embed, residual), dist_scale);
 
         // [n_bins]
-        struct ggml_tensor * sqr_embed     = ggml_sqr(ctx0, block.embed);
+        struct ggml_tensor * sqr_embed = ggml_sqr(ctx0, block.embed);
         struct ggml_tensor * sqr_embed_nrm = ggml_sum_rows(ctx0, sqr_embed);
 
         // [seq_length]
-        struct ggml_tensor * sqr_inp     = ggml_sqr(ctx0, residual);
+        struct ggml_tensor * sqr_inp = ggml_sqr(ctx0, residual);
         struct ggml_tensor * sqr_inp_nrm = ggml_sum_rows(ctx0, sqr_inp);
 
         // [seq_length, n_bins]
         struct ggml_tensor * dist = ggml_add(ctx0, ggml_repeat(ctx0, sqr_inp_nrm, dp), dp);
         dist = ggml_add(ctx0, ggml_repeat(ctx0, ggml_transpose(ctx0, sqr_embed_nrm), dist), dist);
-        dist = ggml_scale(ctx0, dist, ggml_new_f32(ctx0, -1.0f));
+        dist = ggml_neg(ctx0, dist);
 
         // take the argmax over the column dimension
         // [seq_length]
@@ -850,13 +879,21 @@ struct ggml_tensor * encodec_forward_quantizer_decode(
     const auto & allocr  = ectx->allocr;
 
     const int hidden_dim = hparams.hidden_dim;
-    const int n_q        = hparams.n_q;
     const int seq_length = codes->ne[0];
+
+    const int n_bins     = hparams.n_bins;
+    const int sr         = hparams.sr;
+    const int bandwidth  = hparams.bandwidth;
+    const int hop_length = hparams.hop_length;
+
+    const int frame_rate = (int) ceilf(sr / hop_length);
+    const int n_q = get_num_quantizers_for_bandwidth(n_bins, frame_rate, bandwidth);
 
     assert(n_q == codes->ne[1]);
 
     struct ggml_tensor * quantized_out = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
     ggml_allocr_alloc(allocr, quantized_out);
+
     if (!ggml_allocr_is_measure(allocr)) {
         quantized_out = ggml_set_zero(quantized_out);
     }
@@ -1157,6 +1194,7 @@ struct encodec_context * encodec_load_model(const std::string & model_path) {
     for (int i = 0; i < 4; i++) {
         hop_length *= ectx->model.hparams.ratios[i];
     }
+    ectx->model.hparams.hop_length = hop_length;
 
     ectx->model.hparams.n_q = get_num_codebooks(bandwidth, hop_length, sr);
     fprintf(stderr, "%s: n_q = %d\n", __func__, ectx->model.hparams.n_q);
@@ -1183,4 +1221,8 @@ void encodec_free(struct encodec_context * ectx) {
     ggml_backend_free(ectx->model.backend);
 
     delete ectx;
+}
+
+void encodec_set_target_bandwidth(struct encodec_context * ectx, int bandwidth) {
+    ectx->model.hparams.bandwidth = bandwidth;
 }

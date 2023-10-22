@@ -44,6 +44,8 @@ struct encodec_hparams {
 
     // The number of codebooks.
     int32_t n_q = 32;
+    // The product of the ratios.
+    int32_t hop_length = 1;
 
     int32_t ftype;
 };
@@ -172,6 +174,8 @@ struct encodec_context {
 };
 
 struct encodec_context * encodec_load_model(const std::string & model_path);
+
+void encodec_set_target_bandwidth(struct encodec_context * ectx, int bandwidth);
 
 bool encodec_reconstruct_audio(
             struct encodec_context * ectx,

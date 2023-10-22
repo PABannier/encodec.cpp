@@ -25,6 +25,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    encodec_set_target_bandwidth(ectx, 12);
+
     // read audio from disk
     std::vector<float> original_audio_arr;
     if(!read_wav_from_disk(params.input_path, original_audio_arr)) {
