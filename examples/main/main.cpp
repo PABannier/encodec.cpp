@@ -42,6 +42,7 @@ int main(int argc, char **argv) {
 
     // write reconstructed audio on disk
     auto & audio_arr = ectx->out_audio;
+    audio_arr.resize(original_audio_arr.size());  // output is slightly longer than input
     write_wav_on_disk(audio_arr, params.output_path);
 
     // report timing
