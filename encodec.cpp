@@ -773,11 +773,13 @@ struct ggml_tensor * encodec_forward_encoder(
 
         // first lstm layer
         struct ggml_tensor * hs1 = forward_pass_lstm_unilayer(
-            ctx0, allocr, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b);
+            ctx0, allocr, cur, lstm.l0_ih_w, lstm.l0_hh_w,
+            lstm.l0_ih_b, lstm.l0_hh_b);
 
         // second lstm layer
         struct ggml_tensor * out = forward_pass_lstm_unilayer(
-            ctx0, allocr, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b);
+            ctx0, allocr, hs1, lstm.l1_ih_w, lstm.l1_hh_w,
+            lstm.l1_ih_b, lstm.l1_hh_b);
 
         inpL = ggml_add(ctx0, inpL, out);
     }
