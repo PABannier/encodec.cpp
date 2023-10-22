@@ -125,8 +125,9 @@ def parse_hparams(outfile, use_f16):
     n_filters = 32
     kernel_size = 7
     residual_kernel_size = 3
-    n_q = 32
     n_bins = 1024
+    bandwidth = 24
+    sr = 24000
     ftype = int(use_f16)
 
     outfile.write(struct.pack("i", in_channels))
@@ -134,8 +135,9 @@ def parse_hparams(outfile, use_f16):
     outfile.write(struct.pack("i", n_filters))
     outfile.write(struct.pack("i", kernel_size))
     outfile.write(struct.pack("i", residual_kernel_size))
-    outfile.write(struct.pack("i", n_q))
     outfile.write(struct.pack("i", n_bins))
+    outfile.write(struct.pack("i", bandwidth))
+    outfile.write(struct.pack("i", sr))
     outfile.write(struct.pack("i", ftype))
 
 
