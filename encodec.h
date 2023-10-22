@@ -35,12 +35,15 @@ struct encodec_hparams {
     // The stride of the first convolution.
     int32_t stride               = 1;
 
-    // The number of codebooks is determined by the bandwidth selected.
-    // Supported bandwidths are 1.5kbps (n_q = 2), 3 kbps (n_q = 4), 6 kbps (n_q = 8),
-    // 12 kbps (n_q = 16) and 24kbps (n_q = 32).
-    int32_t n_q    = 32;
-    int32_t n_bins = 1024;
-    int32_t sr     = 24000;
+    // The dimension of the codebook.
+    int32_t n_bins    = 1024;
+    // The sample rate of the model.
+    int32_t sr        = 24000;
+    // The bandwidth.
+    int32_t bandwidth = 24;
+
+    // The number of codebooks.
+    int32_t n_q;
 
     int32_t ftype;
 };

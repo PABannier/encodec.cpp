@@ -141,6 +141,9 @@ static struct ggml_tensor * pad_1d(
 }
 
 static int32_t get_num_codebooks(float bandwidth, int hop_length, float sample_rate) {
+    // The number of codebooks is determined by the bandwidth selected.
+    // Supported bandwidths are 1.5kbps (n_q = 2), 3 kbps (n_q = 4), 6 kbps (n_q = 8),
+    // 12 kbps (n_q = 16) and 24kbps (n_q = 32).
     return (int32_t) ceilf(1000 * bandwidth / (ceilf(sample_rate / hop_length) * 10));
 }
 
@@ -298,8 +301,9 @@ bool encodec_load_model_weights(const std::string & fname, encodec_model & model
         read_safe(infile, hparams.kernel_size);
         read_safe(infile, hparams.residual_kernel_size);
         // read_safe(infile, hparams.ratios);
-        read_safe(infile, hparams.n_q);
         read_safe(infile, hparams.n_bins);
+        read_safe(infile, hparams.bandwidth);
+        read_safe(infile, hparams.sr);
         read_safe(infile, hparams.ftype);
 
         const int32_t qntvr = hparams.ftype / GGML_QNT_VERSION_FACTOR;
@@ -310,8 +314,9 @@ bool encodec_load_model_weights(const std::string & fname, encodec_model & model
         printf("%s: kernel_size = %d\n", __func__, hparams.kernel_size);
         printf("%s: res_kernel  = %d\n", __func__, hparams.residual_kernel_size);
         // printf("%s: ratios      = %d\n", __func__, hparams.ratios);
-        printf("%s: n_q         = %d\n", __func__, hparams.n_q);
         printf("%s: n_bins      = %d\n", __func__, hparams.n_bins);
+        printf("%s: bandwidth   = %d\n", __func__, hparams.bandwidth);
+        printf("%s: sample_rate = %d\n", __func__, hparams.sr);
         printf("%s: ftype       = %d\n", __func__, hparams.ftype);
         printf("%s: qntvr       = %d\n", __func__, qntvr);
 
@@ -341,7 +346,6 @@ bool encodec_load_model_weights(const std::string & fname, encodec_model & model
         const int n_filters     = hparams.n_filters;
         const int kernel_size   = hparams.kernel_size;
         const int res_kernel_sz = hparams.residual_kernel_size;
-        const int n_q           = hparams.n_q;
         const int n_bins        = hparams.n_bins;
         const int *ratios       = hparams.ratios;
         const int n_lstm_layers = hparams.n_lstm_layers;
@@ -388,6 +392,7 @@ bool encodec_load_model_weights(const std::string & fname, encodec_model & model
         buffer_size *= 2;
 
         // quantizer
+        int n_q = 32; // 32 is an upper bound on the number of codebooks.
         buffer_size += n_q * hidden_dim * n_bins * ggml_type_size(GGML_TYPE_F32);  // embed
 
         buffer_size += 10ull*MB;  // object overhead
@@ -784,7 +789,7 @@ struct ggml_tensor * encodec_forward_quantizer_encode(
     const auto & hparams = model.hparams;
     const auto & allocr  = ectx->allocr;
 
-    const int n_q = 16;
+    const int n_q = hparams.n_q;
 
     const int seq_length = encoded_inp->ne[0];
 
@@ -845,7 +850,7 @@ struct ggml_tensor * encodec_forward_quantizer_decode(
     const auto & allocr  = ectx->allocr;
 
     const int hidden_dim = hparams.hidden_dim;
-    const int n_q        = 16;
+    const int n_q        = hparams.n_q;
     const int seq_length = codes->ne[0];
 
     assert(n_q == codes->ne[1]);
@@ -961,10 +966,7 @@ struct ggml_cgraph * encodec_build_graph(
     const auto & hparams = model.hparams;
     const auto & allocr = ectx->allocr;
 
-    // originally, n_q = n_q or len(self.layers)
-    // for bark, n_q is set to 16...
-    // const int n_q = hparams.n_q;
-    const int n_q = 16;
+    const int n_q = hparams.n_q;
 
     // since we are using ggml-alloc, this buffer only needs enough space to hold the
     // ggml_tensor and ggml_cgraph structs, but not the tensor data
@@ -1146,6 +1148,17 @@ struct encodec_context * encodec_load_model(const std::string & model_path) {
         fprintf(stderr, "%s: failed to load model weights from '%s'\n", __func__, model_path.c_str());
         return {};
     }
+
+    // pre-compute the number of codebooks required
+    int bandwidth = ectx->model.hparams.bandwidth;
+    int sr        = ectx->model.hparams.sr;
+
+    int hop_length = 1;
+    for (int i = 0; i < 4; i++) {
+        hop_length *= ectx->model.hparams.ratios[i];
+    }
+
+    ectx->model.hparams.n_q = get_num_codebooks(bandwidth, hop_length, sr);
 
     ectx->t_load_us = ggml_time_us() - t_start_load_us;
 
