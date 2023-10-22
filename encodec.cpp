@@ -140,10 +140,14 @@ static struct ggml_tensor * pad_1d(
     return dest;
 }
 
+static int32_t get_num_codebooks(float bandwidth, int hop_length, float sample_rate) {
+    return (int32_t) ceilf(1000 * bandwidth / (ceilf(sample_rate / hop_length) * 10));
+}
+
 static struct ggml_tensor * unpad_1d(
-      struct ggml_context * ctx0, 
-       struct ggml_tensor * inp, 
-                      int   padding_left, 
+      struct ggml_context * ctx0,
+       struct ggml_tensor * inp,
+                      int   padding_left,
                       int   padding_right) {
     int length = inp->ne[0];
     int dim    = inp->ne[1];
