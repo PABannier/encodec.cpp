@@ -62,31 +62,13 @@ void print_tensor(struct ggml_tensor * a) {
             }
         }
         printf("sum=%.2f; max=%.2f; min=%.2f\n", sum, maxv, minv);
-        printf("shape=[%d, %d, %d, %d]\n", a->ne[0], a->ne[1], a->ne[2], a->ne[3]);
+        printf("shape=[%lld, %lld, %lld, %lld]\n", a->ne[0], a->ne[1], a->ne[2], a->ne[3]);
     }
 }
 
 template<typename T>
 static void read_safe(std::ifstream& infile, T& dest) {
     infile.read((char*)& dest, sizeof(T));
-}
-
-static void ggml_graph_compute_helper(std::vector<uint8_t> & buf, ggml_cgraph * graph, int n_threads) {
-    struct ggml_cplan plan = ggml_graph_plan(graph, n_threads);
-
-    if (plan.work_size > 0) {
-        buf.resize(plan.work_size);
-        plan.work_data = buf.data();
-    }
-
-    ggml_graph_compute(graph, &plan);
-}
-
-static void ggml_disconnect_node_from_graph(ggml_tensor * t) {
-    t->op = GGML_OP_NONE;
-    for (int i = 0; i < GGML_MAX_SRC; i++) {
-        t->src[i] = NULL;
-    }
 }
 
 static void encodec_sigmoid_impl(
@@ -195,25 +177,21 @@ static struct ggml_tensor * strided_conv_transpose_1d(
     struct ggml_tensor * dst = ggml_conv_transpose_1d(
         ctx0, conv_w, inp, stride, 0 /* p0 */, 1 /* d0 */);
 
-    return dst;
-
     // add bias
     dst = ggml_transpose(ctx0, dst);
     dst = ggml_add(ctx0, ggml_repeat(ctx0, conv_b, dst), dst);
     dst = ggml_cont(ctx0, ggml_transpose(ctx0, dst));
 
-    return dst;
+    int kernel_size   = conv_w->ne[0];
+    int padding_total = kernel_size - stride;
 
-    // int kernel_size   = conv_w->ne[0];
-    // int padding_total = kernel_size - stride;
+    int padding_right = ceilf(padding_total);
+    int padding_left = padding_total - padding_right;
 
-    // int padding_right = ceilf(padding_total);
-    // int padding_left = padding_total - padding_right;
+    struct ggml_tensor * unpadded = unpad_1d(ctx0, dst, padding_left, padding_right);
+    unpadded = ggml_cont(ctx0, unpadded);
 
-    // struct ggml_tensor * unpadded = unpad_1d(ctx0, dst, padding_left, padding_right);
-    // unpadded = ggml_cont(ctx0, unpadded);
-
-    // return unpadded;
+    return unpadded;
 }
 
 static struct ggml_tensor * forward_pass_lstm_unilayer(
