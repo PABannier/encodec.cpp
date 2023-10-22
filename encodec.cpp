@@ -95,18 +95,28 @@ static void encodec_sigmoid_impl(
     }
 }
 
-static struct ggml_tensor * encodec_sigmoid(ggml_context * ctx, struct ggml_tensor * x) {
+static struct ggml_tensor * encodec_sigmoid(
+      struct ggml_context * ctx,
+       struct ggml_tensor * x) {
     return ggml_map_custom1(ctx, x, encodec_sigmoid_impl, GGML_N_TASKS_MAX, NULL);
 }
 
-static int get_extra_padding_for_conv_1d(ggml_tensor * inp, float kernel_size, float stride, float padding_total) {
+static int get_extra_padding_for_conv_1d(
+                struct ggml_tensor * inp,
+                             float   kernel_size,
+                             float   stride,
+                             float   padding_total) {
     float length = inp->ne[0];
     float n_frames = (length - kernel_size + padding_total) / stride + 1.0f;
     int ideal_length = (ceilf(n_frames) - 1) * stride + (kernel_size - padding_total);
     return ideal_length - length;
 }
 
-static struct ggml_tensor * pad_1d(ggml_context * ctx0, ggml_tensor * inp, int padding_left, int padding_right) {
+static struct ggml_tensor * pad_1d(
+      struct ggml_context * ctx0,
+       struct ggml_tensor * inp,
+                      int   padding_left,
+                      int   padding_right) {
     int length = inp->ne[0];
     int dim = inp->ne[1];
 
@@ -130,7 +140,11 @@ static struct ggml_tensor * pad_1d(ggml_context * ctx0, ggml_tensor * inp, int p
     return dest;
 }
 
-static struct ggml_tensor * unpad_1d(ggml_context * ctx0, ggml_tensor * inp, int padding_left, int padding_right) {
+static struct ggml_tensor * unpad_1d(
+      struct ggml_context * ctx0, 
+       struct ggml_tensor * inp, 
+                      int   padding_left, 
+                      int   padding_right) {
     int length = inp->ne[0];
     int dim    = inp->ne[1];
 
@@ -195,13 +209,13 @@ static struct ggml_tensor * strided_conv_transpose_1d(
 }
 
 static struct ggml_tensor * forward_pass_lstm_unilayer(
-            struct ggml_context * ctx0,
-             struct ggml_allocr * allocr,
-             struct ggml_tensor * inp,
-             struct ggml_tensor * weight_ih,
-             struct ggml_tensor * weight_hh,
-             struct ggml_tensor * bias_ih,
-             struct ggml_tensor * bias_hh) {
+      struct ggml_context * ctx0,
+       struct ggml_allocr * allocr,
+       struct ggml_tensor * inp,
+       struct ggml_tensor * weight_ih,
+       struct ggml_tensor * weight_hh,
+       struct ggml_tensor * bias_ih,
+       struct ggml_tensor * bias_hh) {
 
     const int input_dim  = inp->ne[1];
     const int hidden_dim = weight_ih->ne[1]/4;
@@ -251,7 +265,7 @@ static struct ggml_tensor * forward_pass_lstm_unilayer(
     return hs;
 }
 
-bool encodec_load_model_weights(const std::string& fname, encodec_model& model) {
+bool encodec_load_model_weights(const std::string & fname, encodec_model & model) {
     fprintf(stderr, "%s: loading model from '%s'\n", __func__, fname.c_str());
 
     auto infile = std::ifstream(fname, std::ios::binary);
