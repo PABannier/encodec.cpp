@@ -155,8 +155,13 @@ struct encodec_context {
     // custom allocrator
     struct ggml_allocr * allocr = NULL;
 
-    // output audio
-    std::vector<float> out_audio;
+    // intermediate steps
+    struct ggml_tensor * encoded = NULL;  // Encoded audio
+    struct ggml_tensor * codes   = NULL;  // Quantized representation of audio in codebook
+    struct ggml_tensor * decoded = NULL;  // Reconstructed audio from codes
+
+    std::vector<int32_t> out_codes;
+    std::vector<float>   out_audio;
 
     // statistics
     int64_t t_load_us    = 0;
@@ -166,6 +171,11 @@ struct encodec_context {
 struct encodec_context * encodec_load_model(const std::string & model_path);
 
 bool encodec_reconstruct_audio(
+            struct encodec_context * ectx,
+                std::vector<float> & raw_audio,
+                               int   n_threads);
+
+bool encodec_compress_audio(
             struct encodec_context * ectx,
                 std::vector<float> & raw_audio,
                                int   n_threads);

@@ -25,22 +25,14 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // read audio from disk
-    std::vector<float> original_audio_arr;
-    if(!read_wav_from_disk(params.input_path, original_audio_arr)) {
-        printf("%s: error during reading wav file\n", __func__);
-        return 1;
-    }
+    // read compressed audio from disk
+    std::vector<int32_t> codes = read_codes_from_file(params.input_path);
 
-    // reconstruct audio
-    if (!encodec_reconstruct_audio(ectx, original_audio_arr, params.n_threads)) {
-        printf("%s: error during inference\n", __func__);
-        return 1;
-    }
+    // decompress audio
+    // TODO: decompress audio
 
     // write reconstructed audio on disk
-    auto & audio_arr = ectx->out_audio;
-    write_wav_on_disk(audio_arr, params.output_path);
+    // TODO: write codec output
 
     // report timing
     {

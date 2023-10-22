@@ -32,15 +32,17 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // reconstruct audio
-    if (!encodec_reconstruct_audio(ectx, original_audio_arr, params.n_threads)) {
-        printf("%s: error during inference\n", __func__);
+    // compress audio
+    if (!encodec_compress_audio(ectx, original_audio_arr, params.n_threads)) {
+        printf("%s: error during compression \n", __func__);
         return 1;
     }
 
     // write reconstructed audio on disk
-    auto & audio_arr = ectx->out_audio;
-    write_wav_on_disk(audio_arr, params.output_path);
+    if (!write_codes_to_file(params.output_path, ectx->out_codes, original_audio_arr.size())) {
+        printf("%s: error during writing codes to file\n", __func__);
+        return 1;
+    }
 
     // report timing
     {
