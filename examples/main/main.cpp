@@ -19,7 +19,7 @@ int main(int argc, char **argv) {
     }
 
     // initialize encodec context
-    struct encodec_context * ectx = encodec_load_model(params.model_path);
+    struct encodec_context * ectx = encodec_load_model(params.model_path, params.n_gpu_layers);
     if (!ectx) {
         printf("%s: error during loading model\n", __func__);
         return 1;

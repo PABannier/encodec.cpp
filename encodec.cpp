@@ -1,3 +1,11 @@
+#include "ggml.h"
+#include "ggml-alloc.h"
+#include "ggml-backend.h"
+
+#ifdef GGML_USE_METAL
+#include "ggml-metal.h"
+#endif
+
 #include <cassert>
 #include <cmath>
 #include <cstring>
@@ -8,9 +16,6 @@
 #include <string>
 #include <vector>
 
-#include "ggml.h"
-#include "ggml-alloc.h"
-#include "ggml-backend.h"
 #include "encodec.h"
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -74,6 +79,13 @@ void print_tensor(struct ggml_tensor * a) {
 template<typename T>
 static void read_safe(std::ifstream& infile, T& dest) {
     infile.read((char*)& dest, sizeof(T));
+}
+
+static void ggml_log_callback_default(ggml_log_level level, const char * text, void * user_data) {
+    (void) level;
+    (void) user_data;
+    fputs(text, stderr);
+    fflush(stderr);
 }
 
 static void encodec_sigmoid_impl(
@@ -287,7 +299,7 @@ static struct ggml_tensor * forward_pass_lstm_unilayer(
     return hs;
 }
 
-bool encodec_load_model_weights(const std::string & fname, encodec_model & model) {
+bool encodec_load_model_weights(const std::string & fname, encodec_model & model, int n_gpu_layers) {
     fprintf(stderr, "%s: loading model from '%s'\n", __func__, fname.c_str());
 
     auto infile = std::ifstream(fname, std::ios::binary);
@@ -433,6 +445,17 @@ bool encodec_load_model_weights(const std::string & fname, encodec_model & model
             return false;
         }
     }
+
+#ifdef GGML_USE_METAL
+    if (n_gpu_layers > 0) {
+        fprintf(stderr, "%s: using Metal backend\n", __func__);
+        ggml_metal_log_set_callback(ggml_log_callback_default, nullptr);
+        model.backend = ggml_backend_metal_init();
+        if (!model.backend) {
+            fprintf(stderr, "%s: ggml_backend_metal_init() failed\n", __func__);
+        }
+    }
+#endif
 
     if (!model.backend) {
         // fallback to CPU backend
@@ -689,7 +712,12 @@ bool encodec_load_model_weights(const std::string & fname, encodec_model & model
 
             ggml_allocr_alloc(alloc, tensor);
 
-            if (ggml_backend_is_cpu(model.backend)) {
+            if (ggml_backend_is_cpu(model.backend)
+#ifdef GGML_USE_METAL
+                || ggml_backend_is_metal(model.backend)
+#endif
+            ) {
+                // for the CPU and Metal backends, we can read directly into the device memory
                 infile.read(reinterpret_cast<char *>(tensor->data), ggml_nbytes(tensor));
             } else {
                 // read into a temporary buffer first, then copy to device memory
@@ -1158,6 +1186,11 @@ bool encodec_eval_internal(
     if (ggml_backend_is_cpu(model.backend)) {
         ggml_backend_cpu_set_n_threads(model.backend, n_threads);
     }
+#ifdef GGML_USE_METAL
+    if (ggml_backend_is_metal(model.backend)) {
+        ggml_backend_metal_set_n_cb(model.backend, n_threads);
+    }
+#endif
     ggml_backend_graph_compute(model.backend, gf);
 
     return true;
@@ -1183,6 +1216,11 @@ bool encodec_eval_internal(
     if (ggml_backend_is_cpu(model.backend)) {
         ggml_backend_cpu_set_n_threads(model.backend, n_threads);
     }
+#ifdef GGML_USE_METAL
+    if (ggml_backend_is_metal(model.backend)) {
+        ggml_backend_metal_set_n_cb(model.backend, n_threads);
+    }
+#endif
     ggml_backend_graph_compute(model.backend, gf);
 
     return true;
@@ -1343,13 +1381,13 @@ bool encodec_decompress_audio(
     return true;
 }
 
-struct encodec_context * encodec_load_model(const std::string & model_path) {
+struct encodec_context * encodec_load_model(const std::string & model_path, int n_gpu_layers) {
     int64_t t_start_load_us = ggml_time_us();
 
     struct encodec_context * ectx = new encodec_context();
 
     ectx->model = encodec_model();
-    if (!encodec_load_model_weights(model_path, ectx->model)) {
+    if (!encodec_load_model_weights(model_path, ectx->model, n_gpu_layers)) {
         fprintf(stderr, "%s: failed to load model weights from '%s'\n", __func__, model_path.c_str());
         return {};
     }
