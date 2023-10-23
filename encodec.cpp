@@ -19,11 +19,11 @@
 
 typedef enum {
     // Run the end-to-end encoder-decoder pipeline
-    full        = 0,
+    full   = 0,
     // Encode an audio (encoder + quantizer encode)
-    encode_only = 1,
+    encode = 1,
     // Decode an audio from a compressed representation (quantizer decode + decoder)
-    decode_only = 2,
+    decode = 2,
 } encodec_run_mode;
 
 void print_tensor(struct ggml_tensor * a) {
@@ -1042,7 +1042,7 @@ struct ggml_cgraph * encodec_build_graph(
             {
                 ggml_build_forward_expand(gf, decoded);
             } break;
-        case encodec_run_mode::encode_only:
+        case encodec_run_mode::encode:
             {
                 ggml_build_forward_expand(gf, codes);
             } break;
@@ -1155,7 +1155,33 @@ bool encodec_compress_audio(
             struct encodec_context * ectx,
                 std::vector<float> & raw_audio,
                                int   n_threads) {
-    if(!encodec_eval(ectx, raw_audio, n_threads, encodec_run_mode::encode_only)) {
+    if(!encodec_eval(ectx, raw_audio, n_threads, encodec_run_mode::encode)) {
+        fprintf(stderr, "%s: failed to run encodec eval\n", __func__);
+        return false;
+    }
+
+    if (!ectx->codes) {
+        fprintf(stderr, "%s: null codes tensor\n", __func__);
+        return false;
+    }
+
+    struct ggml_tensor * codes = ectx->codes;
+
+    auto & out_codes = ectx->out_codes;
+
+    int out_length = codes->ne[0]*codes->ne[1];
+    out_codes.resize(out_length);
+
+    ggml_backend_tensor_get(codes, out_codes.data(), 0, out_length*ggml_element_size(codes));
+
+    return true;
+}
+
+bool encodec_decompress_audio(
+            struct encodec_context * ectx,
+                std::vector<float> & raw_audio,
+                               int   n_threads) {
+    if(!encodec_eval(ectx, raw_audio, n_threads, encodec_run_mode::decode)) {
         fprintf(stderr, "%s: failed to run encodec eval\n", __func__);
         return false;
     }
