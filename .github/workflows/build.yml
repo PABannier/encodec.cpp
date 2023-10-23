@@ -81,7 +81,7 @@ jobs:
         run: |
           brew update
 
-      -name: Create build environment
+      - name: Create build environment
         run: mkdir build
 
       - name: Configure CMake
