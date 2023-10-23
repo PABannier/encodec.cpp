@@ -9,24 +9,26 @@ High-performance inference of [Meta's Encodec](https://github.com/facebookresear
 
 - Plain C/C++ implementation without dependencies using [ggml](https://github.com/ggerganov/ggml)
 
-The entire implementation of the model is contained in 3 source files:
+## Demo
 
-Tensor operations: ggml.h / ggml.c<br/>
-Inference: encodec.h / encodec.cpp
+Here is a demo of running Encodec on a single M1 MacBook Pro:
+
+
 
 ## Roadmap
 
 - [x] Support of 24Khz model
-- [ ] Support of 48Khz model
-- [ ] Encodec's language model support
 - [x] Mixed F16 / F32 precision
-
+- [ ] 4-bit and 8-bit quantization
+- [ ] Metal support
+- [ ] cuBLAS support
 
 ## Implementation details
 
 - The core tensor operations are implemented in C ([ggml.h](ggml.h) / [ggml.c](ggml.c))
 - The encoder-decoder architecture and the high-level C-style API are implemented in C++ ([encodec.h](encodec.h) / [encodec.cpp](encodec.cpp))
-- Basic usage is demonstrated in [main.cpp](examples/main)
+- Basic usage is demonstrated in [main.cpp](examples/main).
+
 
 ## Usage
 
