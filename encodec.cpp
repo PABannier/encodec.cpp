@@ -2,6 +2,10 @@
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 
+#ifdef GGML_USE_CUBLAS
+#include "ggml-cuda.h"
+#endif
+
 #ifdef GGML_USE_METAL
 #include "ggml-metal.h"
 #endif
@@ -445,6 +449,16 @@ bool encodec_load_model_weights(const std::string & fname, encodec_model & model
             return false;
         }
     }
+
+#ifdef GGML_USE_CUBLAS
+    if (n_gpu_layers > 0) {
+        fprintf(stderr, "%s: using CUDA backend\n", __func__);
+        model.backend = ggml_backend_cuda_init();
+        if (!model.backend) {
+            fprintf(stderr, "%s: ggml_backend_cuda_init() failed\n", __func__);
+        }
+    }
+#endif
 
 #ifdef GGML_USE_METAL
     if (n_gpu_layers > 0) {
