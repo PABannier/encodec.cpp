@@ -13,7 +13,7 @@ High-performance inference of [Meta's Encodec](https://github.com/facebookresear
 
 Here is a demo of running Encodec on a single M1 MacBook Pro:
 
-
+https://github.com/PABannier/encodec.cpp/assets/12958149/d11561be-98e9-4504-bba7-86bcc233a499
 
 ## Roadmap
 
