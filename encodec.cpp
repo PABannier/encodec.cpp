@@ -1000,6 +1000,7 @@ struct ggml_cgraph * encodec_build_graph(
         struct encodec_context * ectx,
             std::vector<float> & inp_audio,
         const encodec_run_mode   mode) {
+    assert(mode == encodec_run_mode::full || mode == encodec_run_mode::encode);
 
     const auto & model = ectx->model;
     const auto & hparams = model.hparams;
@@ -1046,6 +1047,10 @@ struct ggml_cgraph * encodec_build_graph(
             {
                 ggml_build_forward_expand(gf, codes);
             } break;
+        case encodec_run_mode::decode:
+            {
+                return NULL;
+            } break;
         default:
             {
                 fprintf(stderr, "%s: unknown run mode\n", __func__);
@@ -1057,6 +1062,77 @@ struct ggml_cgraph * encodec_build_graph(
 
     ectx->encoded = encoded;
     ectx->codes   = codes;
+    ectx->decoded = decoded;
+
+    return gf;
+}
+
+struct ggml_cgraph * encodec_build_graph(
+        struct encodec_context * ectx,
+          std::vector<int32_t> & codes,
+        const encodec_run_mode   mode) {
+    assert(mode == encodec_run_mode::decode);
+
+    const auto & model = ectx->model;
+    const auto & hparams = model.hparams;
+    const auto & allocr = ectx->allocr;
+
+    const int n_bins     = hparams.n_bins;
+    const int sr         = hparams.sr;
+    const int bandwidth  = hparams.bandwidth;
+    const int hop_length = hparams.hop_length;
+
+    const int frame_rate = (int) ceilf(sr / hop_length);
+    const int n_q = get_num_quantizers_for_bandwidth(n_bins, frame_rate, bandwidth);
+
+    if (codes.size() % n_q != 0) {
+        fprintf(stderr, "%s: invalid number of codes\n", __func__);
+        return NULL;
+    }
+
+    const int N = codes.size() / n_q;
+
+    // since we are using ggml-alloc, this buffer only needs enough space to hold the
+    // ggml_tensor and ggml_cgraph structs, but not the tensor data
+    static size_t buf_size = ggml_tensor_overhead()*GGML_MAX_NODES + ggml_graph_overhead();
+    static std::vector<uint8_t> buf(buf_size);
+
+    struct ggml_init_params ggml_params = {
+        /*.mem_size   =*/ buf_size,
+        /*.mem_buffer =*/ buf.data(),
+        /*.no_alloc   =*/ true,
+    };
+
+    struct ggml_context * ctx0 = ggml_init(ggml_params);
+
+    struct ggml_cgraph * gf = ggml_new_graph(ctx0);
+
+    struct ggml_tensor * inp_codes = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, N, n_q);
+    ggml_allocr_alloc(allocr, inp_codes);
+
+    // avoid writing to tensors if we are only measuring the memory usage
+    if (!ggml_allocr_is_measure(allocr)) {
+        ggml_backend_tensor_set(inp_codes, codes.data(), 0, N*n_q*ggml_element_size(inp_codes));
+    }
+
+    struct ggml_tensor * quantized = encodec_forward_quantizer_decode(ectx, ctx0, inp_codes);
+    struct ggml_tensor * decoded   = encodec_forward_decoder(ectx, ctx0, quantized);
+
+    switch(mode) {
+        case encodec_run_mode::decode:
+            {
+                ggml_build_forward_expand(gf, decoded);
+            } break;
+        default:
+            {
+                fprintf(stderr, "%s: unknown run mode\n", __func__);
+                return NULL;
+            } break;
+    }
+
+    ggml_free(ctx0);
+
+    ectx->codes   = inp_codes;
     ectx->decoded = decoded;
 
     return gf;
@@ -1087,6 +1163,32 @@ bool encodec_eval_internal(
     return true;
 }
 
+bool encodec_eval_internal(
+        struct encodec_context * ectx,
+          std::vector<int32_t> & codes,
+                     const int   n_threads,
+        const encodec_run_mode   mode) {
+    auto & model  = ectx->model;
+    auto & allocr = ectx->allocr;
+
+    // reset the allocator to free all the memory allocated during the previous inference
+    ggml_allocr_reset(allocr);
+
+    struct ggml_cgraph * gf = encodec_build_graph(ectx, codes, mode);
+
+    // allocate tensors
+    ggml_allocr_alloc_graph(allocr, gf);
+
+    // run the computation
+    if (ggml_backend_is_cpu(model.backend)) {
+        ggml_backend_cpu_set_n_threads(model.backend, n_threads);
+    }
+    ggml_backend_graph_compute(model.backend, gf);
+
+    return true;
+}
+
+
 bool encodec_eval(
             struct encodec_context * ectx,
                 std::vector<float> & raw_audio,
@@ -1116,6 +1218,44 @@ bool encodec_eval(
 
     // encodec eval
     if (!encodec_eval_internal(ectx, raw_audio, n_threads, mode)) {
+        fprintf(stderr, "%s: failed to run encodec eval\n", __func__);
+        return false;
+    }
+
+    ectx->t_compute_ms = ggml_time_ms() - t_start_ms;
+
+    return true;
+}
+
+bool encodec_eval(
+            struct encodec_context * ectx,
+              std::vector<int32_t> & codes,
+                         const int   n_threads,
+            const encodec_run_mode   mode) {
+    const int64_t t_start_ms = ggml_time_ms();
+
+    // allocate the compute buffer
+    {
+        // alignment required by the backend
+        size_t align = ggml_backend_get_alignment(ectx->model.backend);
+        ectx->allocr = ggml_allocr_new_measure(align);
+
+        // create the graph for memory usage estimation
+        struct ggml_cgraph * gf = encodec_build_graph(ectx, codes, mode);
+
+        // compute the required memory
+        size_t mem_size = ggml_allocr_alloc_graph(ectx->allocr, gf);
+
+        // recreate the allocator with the required memory
+        ggml_allocr_free(ectx->allocr);
+        ectx->buf_compute = ggml_backend_alloc_buffer(ectx->model.backend, mem_size);
+        ectx->allocr = ggml_allocr_new_from_buffer(ectx->buf_compute);
+
+        fprintf(stderr, "%s: compute buffer size: %.2f MB\n\n", __func__, mem_size/1024.0/1024.0);
+    }
+
+    // encodec eval
+    if (!encodec_eval_internal(ectx, codes, n_threads, mode)) {
         fprintf(stderr, "%s: failed to run encodec eval\n", __func__);
         return false;
     }
@@ -1179,26 +1319,26 @@ bool encodec_compress_audio(
 
 bool encodec_decompress_audio(
             struct encodec_context * ectx,
-                std::vector<float> & raw_audio,
+              std::vector<int32_t> & codes,
                                int   n_threads) {
-    if(!encodec_eval(ectx, raw_audio, n_threads, encodec_run_mode::decode)) {
+    if(!encodec_eval(ectx, codes, n_threads, encodec_run_mode::decode)) {
         fprintf(stderr, "%s: failed to run encodec eval\n", __func__);
         return false;
     }
 
-    if (!ectx->codes) {
-        fprintf(stderr, "%s: null codes tensor\n", __func__);
+    if (!ectx->decoded) {
+        fprintf(stderr, "%s: null decoded tensor\n", __func__);
         return false;
     }
 
-    struct ggml_tensor * codes = ectx->codes;
+    struct ggml_tensor * decoded = ectx->decoded;
 
-    auto & out_codes = ectx->out_codes;
+    auto & out_audio = ectx->out_audio;
 
-    int out_length = codes->ne[0]*codes->ne[1];
-    out_codes.resize(out_length);
+    int out_length = decoded->ne[0];
+    out_audio.resize(out_length);
 
-    ggml_backend_tensor_get(codes, out_codes.data(), 0, out_length*ggml_element_size(codes));
+    ggml_backend_tensor_get(decoded, out_audio.data(), 0, out_length*ggml_element_size(decoded));
 
     return true;
 }
