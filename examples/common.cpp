@@ -100,11 +100,11 @@ bool read_wav_from_disk(std::string in_path, std::vector<float> & audio_arr) {
 
 void write_wav_on_disk(std::vector<float> & audio_arr, std::string dest_path) {
     drwav_data_format format;
-    format.container     = drwav_container_riff;
-    format.format        = DR_WAVE_FORMAT_IEEE_FLOAT;
-    format.channels      = 1;
-    format.sampleRate    = SAMPLE_RATE;
     format.bitsPerSample = 32;
+    format.sampleRate = SAMPLE_RATE;
+    format.container = drwav_container_riff;
+    format.channels = 1;
+    format.format = DR_WAVE_FORMAT_IEEE_FLOAT;
 
     drwav wav;
     drwav_init_file_write(&wav, dest_path.c_str(), &format, NULL);
