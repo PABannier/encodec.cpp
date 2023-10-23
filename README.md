@@ -21,7 +21,7 @@ https://github.com/PABannier/encodec.cpp/assets/12958149/d11561be-98e9-4504-bba7
 - [x] Mixed F16 / F32 precision
 - [ ] 4-bit and 8-bit quantization
 - [x] Metal support
-- [ ] cuBLAS support
+- [x] cuBLAS support
 
 ## Implementation details
 
@@ -59,5 +59,14 @@ the power consumption and CPU activity is reduced.
 
 ```bash
 cmake -DGGML_METAL=ON -DBUILD_SHARED_LIBS=Off ..
+cmake --build . --config Release
+```
+
+### Using cuBLAS
+
+The inference can be offloaded on a CUDA backend with cuBLAS.
+
+```bash
+cmake -DGGML_CUBLAS=ON -DBUILD_SHARED_LIBS=Off ..
 cmake --build . --config Release
 ```
