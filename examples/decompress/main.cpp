@@ -29,7 +29,8 @@ int main(int argc, char **argv) {
 
     // read compressed audio from disk
     std::vector<int32_t> codes;
-    if (!read_codes_from_file(params.input_path, codes)) {
+    uint32_t audio_length, n_codebooks;
+    if (!read_codes_from_file(params.input_path, codes, audio_length, n_codebooks)) {
         printf("%s: error during reading codes\n", __func__);
         return 1;
     }
@@ -42,6 +43,7 @@ int main(int argc, char **argv) {
 
     // write reconstructed audio on disk
     auto & audio_arr = ectx->out_audio;
+    audio_arr.resize(audio_length);
     write_wav_on_disk(audio_arr, params.output_path);
 
     // report timing

@@ -63,6 +63,12 @@ bool write_codes_to_file(std::string dest_path, std::vector<int32_t> & codes, ui
  *
  * @param code_path Path to the input file.
  * @param codes Vector to store the codes.
+ * @param audio_length Original length of the audio.
+ * @param n_codebooks Number of codebooks used to encode the audio.
  * @return std::vector<int32_t> Vector containing the integers read from the file.
  */
-bool read_codes_from_file(std::string code_path, std::vector<int32_t> & codes);
+bool read_codes_from_file(
+                   std::string   code_path,
+          std::vector<int32_t> & codes,
+                      uint32_t & audio_length,
+                      uint32_t & n_codebooks);
