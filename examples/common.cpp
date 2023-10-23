@@ -75,7 +75,7 @@ int encodec_params_parse(int argc, char ** argv, encodec_params & params) {
     return 0;
 }
 
-bool read_wav_from_disk(std::string in_path, std::vector<float>& audio_arr) {
+bool read_wav_from_disk(std::string in_path, std::vector<float> & audio_arr) {
     uint32_t channels;
     uint32_t sample_rate;
     drwav_uint64 total_frame_count;
@@ -98,7 +98,7 @@ bool read_wav_from_disk(std::string in_path, std::vector<float>& audio_arr) {
     return true;
 }
 
-void write_wav_on_disk(std::vector<float>& audio_arr, std::string dest_path) {
+void write_wav_on_disk(std::vector<float> & audio_arr, std::string dest_path) {
     drwav_data_format format;
     format.container     = drwav_container_riff;
     format.format        = DR_WAVE_FORMAT_IEEE_FLOAT;
@@ -181,7 +181,7 @@ class BitUnpacker {
         int current_bits;
 };
 
-std::vector<char> read_exactly(std::ifstream& fo, size_t size) {
+std::vector<char> read_exactly(std::ifstream & fo, size_t size) {
     std::vector<char> buf;
     buf.reserve(size);
 
@@ -230,13 +230,24 @@ nlohmann::json read_ecdc_header(std::ifstream& fo) {
     int size_header = 4 * sizeof(char) + sizeof(uint8_t) + sizeof(uint32_t);
     std::vector<char> header_bytes = read_exactly(fo, size_header);
 
-    char  * magic          = reinterpret_cast<char*>(header_bytes.data(), header_bytes.data() + 4*sizeof(char));
-    uint8_t  * version     = reinterpret_cast<uint8_t*>(header_bytes.data() + 4*sizeof(char));
-    uint32_t * meta_length = reinterpret_cast<uint32_t*>(header_bytes.data() + 4*sizeof(char) + sizeof(uint8_t));
+    char * magic = reinterpret_cast<char *>(
+        header_bytes.data(), header_bytes.data() + 4*sizeof(char));
+
+    uint8_t * version = reinterpret_cast<uint8_t *>(
+        header_bytes.data() + 4*sizeof(char));
+
+    uint32_t * meta_length = reinterpret_cast<uint32_t *>(
+        header_bytes.data() + 4*sizeof(char) + sizeof(uint8_t));
+
+    // switch to little endian if necessary
+    if (!is_big_endian()) {
+        *meta_length = swap_endianness(*meta_length);
+    }
 
     if (strcmp(magic, "ECDC") != 0) {
         throw std::runtime_error("File is not in ECDC format.");
     }
+
     if (*version != 0) {
         throw std::runtime_error("Version not supported.");
     }
@@ -246,25 +257,37 @@ nlohmann::json read_ecdc_header(std::ifstream& fo) {
     return nlohmann::json::parse(meta_str);
 }
 
-void write_encodec_codes(std::ofstream & fo, std::vector<int32_t> & codes) {
+void write_encodec_codes(
+                 std::ofstream & fo,
+          std::vector<int32_t> & codes) {
     BitPacker bp(BITS_PER_CODEBOOK, fo);
+
     for (int32_t code : codes) {
         bp.push(code);
     }
+
     bp.flush();
 }
 
-bool write_codes_to_file(std::string dest_path, std::vector<int32_t> & codes, uint32_t audio_length) {
+bool write_codes_to_file(
+                   std::string   dest_path,
+          std::vector<int32_t> & codes,
+                      uint32_t   audio_length) {
     std::ofstream fo(dest_path, std::ios::binary);
+
     write_encodec_header(fo, audio_length);
     write_encodec_codes(fo, codes);
+
     fo.close();
 
     return true;
 }
 
-bool read_codes_from_file(std::string code_path, std::vector<int32_t> & codes) {
+bool read_codes_from_file(
+                   std::string   code_path,
+          std::vector<int32_t> & codes) {
     std::ifstream fin(code_path, std::ios::binary);
+
     nlohmann::json metadata = read_ecdc_header(fin);
 
     uint32_t audio_length = metadata["audio_length"];
@@ -274,10 +297,8 @@ bool read_codes_from_file(std::string code_path, std::vector<int32_t> & codes) {
 
     BitUnpacker bu(BITS_PER_CODEBOOK, fin);
 
-    for (int t = 0; t < audio_length; t++) {
-        for (int c = 0; c < n_codebooks; c++) {
-            codes[t * n_codebooks + c] = bu.pull();
-        }
+    for (int i = 0; i < (int) codes.size(); i++) {
+        codes[i] = bu.pull();
     }
 
     fin.close();
