@@ -1,3 +1,13 @@
+/**
+ * @file encodec.h
+ * @brief Header file for the encodec library.
+ *
+ * This file contains the declarations of the structs and functions used in the encodec library.
+ * The library provides functionality for audio compression and decompression using a custom model.
+ * The model consists of an encoder, a quantizer and a decoder, each with their own set of parameters.
+ * The library also provides functions for loading and freeing the model, as well as compressing and decompressing audio data.
+ *
+ */
 #pragma once
 
 #include <cmath>
@@ -173,18 +183,68 @@ struct encodec_context {
     int64_t t_compute_ms = 0;
 };
 
-struct encodec_context * encodec_load_model(const std::string & model_path);
+/**
+ * Loads an encodec model from the specified file path.
+ *
+ * @param model_path The file path to the encodec model.
+ * @return A pointer to the encodec context struct.
+ */
+struct encodec_context * encodec_load_model(
+                 const std::string & model_path);
 
-void encodec_set_target_bandwidth(struct encodec_context * ectx, int bandwidth);
+/**
+ * Sets the target bandwidth for the given encodec context.
+ *
+ * @param ectx The encodec context to set the target bandwidth for.
+ * @param bandwidth The target bandwidth to set, in bits per second.
+ */
+void encodec_set_target_bandwidth(
+            struct encodec_context * ectx,
+                               int   bandwidth);
 
+/**
+ * Reconstructs audio from raw audio data using the specified encodec context.
+ *
+ * @param ectx The encodec context to use for reconstruction.
+ * @param raw_audio The raw audio data to reconstruct.
+ * @param n_threads The number of threads to use for reconstruction.
+ * @return True if the reconstruction was successful, false otherwise.
+ */
 bool encodec_reconstruct_audio(
             struct encodec_context * ectx,
                 std::vector<float> & raw_audio,
                                int   n_threads);
 
+/**
+ * Compresses audio data using the specified encodec context.
+ *
+ * @param ectx The encodec context to use for compression.
+ * @param raw_audio The raw audio data to compress.
+ * @param n_threads The number of threads to use for compression.
+ * @return True if the compression was successful, false otherwise.
+ */
 bool encodec_compress_audio(
             struct encodec_context * ectx,
                 std::vector<float> & raw_audio,
                                int   n_threads);
 
-void encodec_free(struct encodec_context * ectx);
+/**
+ * Decompresses audio data using the specified encodec context.
+ *
+ * @param ectx The encodec context to use for decompression.
+ * @param codes The compressed audio data to decompress.
+ * @param n_threads The number of threads to use for decompression.
+ * @return True if the audio data was successfully decompressed, false otherwise.
+ */
+bool encodec_decompress_audio(
+            struct encodec_context * ectx,
+              std::vector<int32_t> & codes,
+                               int   n_threads);
+
+/**
+ * @brief Frees the memory allocated for an encodec context.
+ *
+ * @param ectx The encodec context to free.
+ */
+void encodec_free(
+            struct encodec_context * ectx);

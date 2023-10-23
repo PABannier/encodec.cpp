@@ -25,14 +25,26 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    encodec_set_target_bandwidth(ectx, 12);
+
     // read compressed audio from disk
-    std::vector<int32_t> codes = read_codes_from_file(params.input_path);
+    std::vector<int32_t> codes;
+    uint32_t audio_length, n_codebooks;
+    if (!read_codes_from_file(params.input_path, codes, audio_length, n_codebooks)) {
+        printf("%s: error during reading codes\n", __func__);
+        return 1;
+    }
 
     // decompress audio
-    // TODO: decompress audio
+    if (!encodec_decompress_audio(ectx, codes, params.n_threads)) {
+        printf("%s: error during decompression\n", __func__);
+        return 1;
+    }
 
     // write reconstructed audio on disk
-    // TODO: write codec output
+    auto & audio_arr = ectx->out_audio;
+    audio_arr.resize(audio_length);
+    write_wav_on_disk(audio_arr, params.output_path);
 
     // report timing
     {

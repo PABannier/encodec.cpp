@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
 
     // read audio from disk
     std::vector<float> original_audio_arr;
-    if(!read_wav_from_disk(params.input_path, original_audio_arr)) {
+    if (!read_wav_from_disk(params.input_path, original_audio_arr)) {
         printf("%s: error during reading wav file\n", __func__);
         return 1;
     }
