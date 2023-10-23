@@ -51,3 +51,13 @@ cd build
 cmake ..
 cmake --build . --config Release
 ```
+
+### Using Metal
+
+Offloading to GPU is possible with the Metal backend for MacOS. Performance are not improved but
+the power consumption and CPU activity is reduced.
+
+```bash
+cmake -DGGML_METAL=ON -DBUILD_SHARED_LIBS=Off ..
+cmake --build . --config Release
+```
