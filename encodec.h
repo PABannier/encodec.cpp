@@ -187,10 +187,12 @@ struct encodec_context {
  * Loads an encodec model from the specified file path.
  *
  * @param model_path The file path to the encodec model.
+ * @param n_gpu_layers The number of GPU layers to use.
  * @return A pointer to the encodec context struct.
  */
 struct encodec_context * encodec_load_model(
-                 const std::string & model_path);
+                 const std::string & model_path,
+                               int   n_gpu_layers);
 
 /**
  * Sets the target bandwidth for the given encodec context.

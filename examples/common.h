@@ -2,7 +2,7 @@
 #include <vector>
 
 /**
- * @brief Struct containing parameters for the encodec program.
+ * @brief Struct containing parameters for the encodec context.
  *
  */
 struct encodec_params {
@@ -17,6 +17,9 @@ struct encodec_params {
 
     // output location
     std::string output_path = "output.wav";
+
+    // number of GPU layers to use
+    int32_t n_gpu_layers = 0;
 };
 
 /**

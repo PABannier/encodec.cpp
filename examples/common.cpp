@@ -41,14 +41,15 @@ void encodec_print_usage(char ** argv, const encodec_params & params) {
     fprintf(stderr, "usage: %s [options]\n", argv[0]);
     fprintf(stderr, "\n");
     fprintf(stderr, "options:\n");
-    fprintf(stderr, "  -h, --help            show this help message and exit\n");
-    fprintf(stderr, "  -t N, --threads N     number of threads to use during computation (default: %d)\n", params.n_threads);
+    fprintf(stderr, "  -h, --help             show this help message and exit\n");
+    fprintf(stderr, "  -t N, --threads N      number of threads to use during computation (default: %d)\n", params.n_threads);
+    fprintf(stderr, "  -g N, --n-gpu-layers N number of GPU layers to use during computation (default: %d)\n", params.n_gpu_layers);
     fprintf(stderr, "  -m FNAME, --model FNAME\n");
-    fprintf(stderr, "                        model path (default: %s)\n", params.model_path.c_str());
+    fprintf(stderr, "                         model path (default: %s)\n", params.model_path.c_str());
     fprintf(stderr, "  -i FNAME, --input FNAME\n");
-    fprintf(stderr, "                        original audio wav (default: %s)\n", params.input_path.c_str());
+    fprintf(stderr, "                         original audio wav (default: %s)\n", params.input_path.c_str());
     fprintf(stderr, "  -o FNAME, --outwav FNAME\n");
-    fprintf(stderr, "                        output generated wav (default: %s)\n", params.output_path.c_str());
+    fprintf(stderr, "                         output generated wav (default: %s)\n", params.output_path.c_str());
     fprintf(stderr, "\n");
 }
 
@@ -58,6 +59,8 @@ int encodec_params_parse(int argc, char ** argv, encodec_params & params) {
 
         if (arg == "-t" || arg == "--threads") {
             params.n_threads = std::stoi(argv[++i]);
+        } else if (arg == "-g" || arg == "--n-gpu-layers") {
+            params.n_gpu_layers = std::stoi(argv[++i]);
         } else if (arg == "-m" || arg == "--model") {
             params.model_path = argv[++i];
         } else if (arg == "-o" || arg == "--outwav") {
