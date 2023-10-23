@@ -263,14 +263,13 @@ bool write_codes_to_file(std::string dest_path, std::vector<int32_t> & codes, ui
     return true;
 }
 
-std::vector<int32_t> read_codes_from_file(std::string code_path) {
+bool read_codes_from_file(std::string code_path, std::vector<int32_t> & codes) {
     std::ifstream fin(code_path, std::ios::binary);
     nlohmann::json metadata = read_ecdc_header(fin);
 
     uint32_t audio_length = metadata["audio_length"];
     uint32_t n_codebooks  = metadata["n_codebooks"];
 
-    std::vector<int32_t> codes;
     codes.resize(audio_length * n_codebooks);
 
     BitUnpacker bu(BITS_PER_CODEBOOK, fin);
@@ -283,5 +282,5 @@ std::vector<int32_t> read_codes_from_file(std::string code_path) {
 
     fin.close();
 
-    return codes;
+    return true;
 }

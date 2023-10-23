@@ -62,6 +62,7 @@ bool write_codes_to_file(std::string dest_path, std::vector<int32_t> & codes, ui
  * @brief Reads a vector of integers from a file on disk.
  *
  * @param code_path Path to the input file.
+ * @param codes Vector to store the codes.
  * @return std::vector<int32_t> Vector containing the integers read from the file.
  */
-std::vector<int32_t> read_codes_from_file(std::string code_path);
+bool read_codes_from_file(std::string code_path, std::vector<int32_t> & codes);
