@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -298,8 +299,8 @@ bool read_codes_from_file(
 
     // TODO: remove hardcoded values
     const int hop_length = 320;  // 8 * 5 * 4 * 2
-    const int frame_rate = (int) ceilf(SAMPLE_RATE / hop_length);
-    const int frame_length = (int) ceilf(audio_length * frame_rate / SAMPLE_RATE);
+    const int frame_rate = std::ceil((float) SAMPLE_RATE / hop_length);
+    const int frame_length = std::ceil((float) audio_length * frame_rate / SAMPLE_RATE);
 
     codes.resize(frame_length * n_codebooks);
 
