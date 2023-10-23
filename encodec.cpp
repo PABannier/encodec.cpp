@@ -1321,7 +1321,7 @@ bool encodec_decompress_audio(
             struct encodec_context * ectx,
               std::vector<int32_t> & codes,
                                int   n_threads) {
-    if(!encodec_eval(ectx, codes, n_threads, encodec_run_mode::decode)) {
+    if (!encodec_eval(ectx, codes, n_threads, encodec_run_mode::decode)) {
         fprintf(stderr, "%s: failed to run encodec eval\n", __func__);
         return false;
     }
