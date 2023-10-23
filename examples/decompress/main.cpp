@@ -28,7 +28,6 @@ int main(int argc, char **argv) {
     encodec_set_target_bandwidth(ectx, 12);
 
     // read compressed audio from disk
-    // std::vector<int32_t> codes = read_codes_from_file(params.input_path);
     std::vector<int32_t> codes;
     if (!read_codes_from_file(params.input_path, codes)) {
         printf("%s: error during reading codes\n", __func__);
