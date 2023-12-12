@@ -7,9 +7,6 @@ if (NOT XCODE AND NOT MSVC AND NOT CMAKE_BUILD_TYPE)
 endif()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
@@ -18,7 +15,7 @@ else()
     set(ENCODEC_STANDALONE OFF)
 endif()
 
-option(ENCODEC_BUILD_EXAMPLES             "encodec: build examples" ${ENCODEC_STANDALONE})
+option(ENCODEC_BUILD_EXAMPLES "encodec: build examples" ${ENCODEC_STANDALONE})
 
 # Build libraries
 
@@ -26,12 +23,7 @@ set(ENCODEC_LIB encodec)
 
 add_subdirectory(ggml)
 
-add_library(
-        ${ENCODEC_LIB}
-        encodec
-        encodec.cpp
-        encodec.h
-)
+add_library(${ENCODEC_LIB} encodec.cpp encodec.h)
 
 if (ENCODEC_BUILD_EXAMPLES)
     add_subdirectory(examples)
