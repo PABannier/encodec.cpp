@@ -1128,7 +1128,7 @@ struct ggml_cgraph * encodec_build_graph(
     const int n_q = get_num_quantizers_for_bandwidth(n_bins, frame_rate, bandwidth);
 
     if (codes.size() % n_q != 0) {
-        fprintf(stderr, "%s: invalid number of codes\n", __func__);
+        fprintf(stderr, "%s: invalid number of codes (length=%zu)\n", __func__, codes.size());
         return NULL;
     }
 
@@ -1193,6 +1193,11 @@ bool encodec_eval_internal(
 
     struct ggml_cgraph * gf = encodec_build_graph(ectx, raw_audio, mode);
 
+    if (!gf) {
+        fprintf(stderr, "%s: failed to build Encodec graph\n", __func__);
+        return false;
+    }
+
     // allocate tensors
     ggml_allocr_alloc_graph(allocr, gf);
 
@@ -1222,6 +1227,11 @@ bool encodec_eval_internal(
     ggml_allocr_reset(allocr);
 
     struct ggml_cgraph * gf = encodec_build_graph(ectx, codes, mode);
+
+    if (!gf) {
+        fprintf(stderr, "%s: failed to build Encodec graph\n", __func__);
+        return false;
+    }
 
     // allocate tensors
     ggml_allocr_alloc_graph(allocr, gf);
@@ -1256,6 +1266,11 @@ bool encodec_eval(
 
         // create the graph for memory usage estimation
         struct ggml_cgraph * gf = encodec_build_graph(ectx, raw_audio, mode);
+
+        if (!gf) {
+            fprintf(stderr, "%s: failed to build Encodec graph\n", __func__);
+            return false;
+        }
 
         // compute the required memory
         size_t mem_size = ggml_allocr_alloc_graph(ectx->allocr, gf);
@@ -1294,6 +1309,11 @@ bool encodec_eval(
 
         // create the graph for memory usage estimation
         struct ggml_cgraph * gf = encodec_build_graph(ectx, codes, mode);
+
+        if (!gf) {
+            fprintf(stderr, "%s: failed to build Encodec graph\n", __func__);
+            return false;
+        }
 
         // compute the required memory
         size_t mem_size = ggml_allocr_alloc_graph(ectx->allocr, gf);
@@ -1445,4 +1465,8 @@ void encodec_free(struct encodec_context * ectx) {
 
 void encodec_set_target_bandwidth(struct encodec_context * ectx, int bandwidth) {
     ectx->model.hparams.bandwidth = bandwidth;
+}
+
+void encodec_set_sample_rate(struct encodec_context * ectx, int sample_rate) {
+    ectx->model.hparams.sr = sample_rate;
 }

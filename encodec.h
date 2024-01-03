@@ -205,6 +205,18 @@ void encodec_set_target_bandwidth(
                                int   bandwidth);
 
 /**
+ * @brief Sets the sample rate for the encodec context.
+ *
+ * This function sets the sample rate for the encodec context specified by `ectx`.
+ *
+ * @param ectx The encodec context.
+ * @param sr The sample rate to be set.
+ */
+void encodec_set_sample_rate(
+            struct encodec_context * ectx,
+                               int   sr);
+
+/**
  * Reconstructs audio from raw audio data using the specified encodec context.
  *
  * @param ectx The encodec context to use for reconstruction.
