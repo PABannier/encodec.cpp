@@ -303,8 +303,14 @@ static struct ggml_tensor * forward_pass_lstm_unilayer(
     return hs;
 }
 
-bool encodec_load_model_weights(const std::string & fname, encodec_model & model, int n_gpu_layers) {
-    fprintf(stderr, "%s: loading model from '%s'\n", __func__, fname.c_str());
+bool encodec_load_model_weights(
+            const std::string & fname, 
+                encodec_model & model, 
+                          int   n_gpu_layers, 
+      encodec_verbosity_level   verbosity) {
+    if (verbosity == encodec_verbosity_level::MEDIUM || verbosity == encodec_verbosity_level::HIGH) {
+        fprintf(stderr, "%s: loading model from '%s'\n", __func__, fname.c_str());
+    }
 
     auto infile = std::ifstream(fname, std::ios::binary);
     if (!infile) {
@@ -339,17 +345,19 @@ bool encodec_load_model_weights(const std::string & fname, encodec_model & model
 
         const int32_t qntvr = hparams.ftype / GGML_QNT_VERSION_FACTOR;
 
-        printf("%s: in_channels = %d\n", __func__, hparams.in_channels);
-        printf("%s: hidden_dim  = %d\n", __func__, hparams.hidden_dim);
-        printf("%s: n_filters   = %d\n", __func__, hparams.n_filters);
-        printf("%s: kernel_size = %d\n", __func__, hparams.kernel_size);
-        printf("%s: res_kernel  = %d\n", __func__, hparams.residual_kernel_size);
-        // printf("%s: ratios      = %d\n", __func__, hparams.ratios);
-        printf("%s: n_bins      = %d\n", __func__, hparams.n_bins);
-        printf("%s: bandwidth   = %d\n", __func__, hparams.bandwidth);
-        printf("%s: sample_rate = %d\n", __func__, hparams.sr);
-        printf("%s: ftype       = %d\n", __func__, hparams.ftype);
-        printf("%s: qntvr       = %d\n", __func__, qntvr);
+        if (verbosity == encodec_verbosity_level::MEDIUM || verbosity == encodec_verbosity_level::HIGH) {
+            printf("%s: in_channels = %d\n", __func__, hparams.in_channels);
+            printf("%s: hidden_dim  = %d\n", __func__, hparams.hidden_dim);
+            printf("%s: n_filters   = %d\n", __func__, hparams.n_filters);
+            printf("%s: kernel_size = %d\n", __func__, hparams.kernel_size);
+            printf("%s: res_kernel  = %d\n", __func__, hparams.residual_kernel_size);
+            // printf("%s: ratios      = %d\n", __func__, hparams.ratios);
+            printf("%s: n_bins      = %d\n", __func__, hparams.n_bins);
+            printf("%s: bandwidth   = %d\n", __func__, hparams.bandwidth);
+            printf("%s: sample_rate = %d\n", __func__, hparams.sr);
+            printf("%s: ftype       = %d\n", __func__, hparams.ftype);
+            printf("%s: qntvr       = %d\n", __func__, qntvr);
+        }
 
         hparams.ftype %= GGML_QNT_VERSION_FACTOR;
     }
@@ -431,8 +439,10 @@ bool encodec_load_model_weights(const std::string & fname, encodec_model & model
         n_tensors = ((4 * 2) * 4 + 2 + 4 * n_lstm_layers + 2) * 2;  // encoder and decoder
         n_tensors += n_q * 1;  // quantizer
 
-        printf("%s: ggml tensor size    = %d bytes\n", __func__, (int) sizeof(ggml_tensor));
-        printf("%s: backend buffer size = %6.2f MB\n", __func__, buffer_size/(1024.0*1024.0));
+        if (verbosity == encodec_verbosity_level::HIGH) {
+            printf("%s: ggml tensor size    = %d bytes\n", __func__, (int) sizeof(ggml_tensor));
+            printf("%s: backend buffer size = %6.2f MB\n", __func__, buffer_size/(1024.0*1024.0));
+        }
     }
 
     // create the ggml context
@@ -452,7 +462,9 @@ bool encodec_load_model_weights(const std::string & fname, encodec_model & model
 
 #ifdef GGML_USE_CUBLAS
     if (n_gpu_layers > 0) {
-        fprintf(stderr, "%s: using CUDA backend\n", __func__);
+        if (verbosity == encodec_verbosity_level::HIGH) {
+            fprintf(stderr, "%s: using CUDA backend\n", __func__);
+        }
         model.backend = ggml_backend_cuda_init();
         if (!model.backend) {
             fprintf(stderr, "%s: ggml_backend_cuda_init() failed\n", __func__);
@@ -462,7 +474,9 @@ bool encodec_load_model_weights(const std::string & fname, encodec_model & model
 
 #ifdef GGML_USE_METAL
     if (n_gpu_layers > 0) {
-        fprintf(stderr, "%s: using Metal backend\n", __func__);
+        if (verbosity == encodec_verbosity_level::HIGH) {
+            fprintf(stderr, "%s: using Metal backend\n", __func__);
+        }
         ggml_metal_log_set_callback(ggml_log_callback_default, nullptr);
         model.backend = ggml_backend_metal_init();
         if (!model.backend) {
@@ -473,7 +487,9 @@ bool encodec_load_model_weights(const std::string & fname, encodec_model & model
 
     if (!model.backend) {
         // fallback to CPU backend
-        fprintf(stderr, "%s: using CPU backend\n", __func__);
+        if (verbosity == encodec_verbosity_level::HIGH) {
+            fprintf(stderr, "%s: using CPU backend\n", __func__);
+        }
         model.backend = ggml_backend_cpu_init();
     }
 
@@ -740,14 +756,19 @@ bool encodec_load_model_weights(const std::string & fname, encodec_model & model
                 ggml_backend_tensor_set(tensor, read_buf.data(), 0, ggml_nbytes(tensor));
             }
 
-            // printf("%48s - [%5d, %5d, %5d], type = %6s, %6.2f MB\n", name.data(), ne[0], ne[1], ne[2], ftype == 0 ? "float" : "f16", ggml_nbytes(tensor)/1024.0/1024.0);
+            if (verbosity == encodec_verbosity_level::HIGH) {
+                printf("%48s - [%5d, %5d, %5d], type = %6s, %6.2f MB\n", name.data(), ne[0], ne[1], ne[2], ftype == 0 ? "float" : "f16", ggml_nbytes(tensor)/1024.0/1024.0);
+            }
 
             total_size += ggml_nbytes(tensor);
             model.n_loaded++;
         }
 
         ggml_allocr_free(alloc);
-        printf("%s: model size = %8.2f MB\n", __func__, total_size/1024.0/1024.0);
+
+        if (verbosity == encodec_verbosity_level::MEDIUM || verbosity == encodec_verbosity_level::HIGH) {
+            printf("%s: model size = %8.2f MB\n", __func__, total_size/1024.0/1024.0);
+        }
     }
 
     infile.close();
@@ -1415,13 +1436,16 @@ bool encodec_decompress_audio(
     return true;
 }
 
-struct encodec_context * encodec_load_model(const std::string & model_path, int n_gpu_layers) {
+struct encodec_context * encodec_load_model(
+                const std::string & model_path, 
+                              int   n_gpu_layers,
+          encodec_verbosity_level   verbosity) {
     int64_t t_start_load_us = ggml_time_us();
 
     struct encodec_context * ectx = new encodec_context();
 
     ectx->model = encodec_model();
-    if (!encodec_load_model_weights(model_path, ectx->model, n_gpu_layers)) {
+    if (!encodec_load_model_weights(model_path, ectx->model, n_gpu_layers, verbosity)) {
         fprintf(stderr, "%s: failed to load model weights from '%s'\n", __func__, model_path.c_str());
         return {};
     }
