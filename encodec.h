@@ -25,6 +25,12 @@
 
 static const size_t MB = 1024*1024;
 
+enum class encodec_verbosity_level {
+    LOW = 0,
+    MEDIUM = 1,
+    HIGH = 2,
+};
+
 struct encodec_hparams {
     // The number of input channels is always 1 (mono).
     int32_t in_channels          = 1;
@@ -188,11 +194,13 @@ struct encodec_context {
  *
  * @param model_path The file path to the encodec model.
  * @param n_gpu_layers The number of GPU layers to use.
+ * @param verbosity The verbosity level when loading the model.
  * @return A pointer to the encodec context struct.
  */
 struct encodec_context * encodec_load_model(
                  const std::string & model_path,
-                               int   n_gpu_layers);
+                               int   n_gpu_layers,
+           encodec_verbosity_level   verbosity);
 
 /**
  * Sets the target bandwidth for the given encodec context.
@@ -203,6 +211,18 @@ struct encodec_context * encodec_load_model(
 void encodec_set_target_bandwidth(
             struct encodec_context * ectx,
                                int   bandwidth);
+
+/**
+ * @brief Sets the sample rate for the encodec context.
+ *
+ * This function sets the sample rate for the encodec context specified by `ectx`.
+ *
+ * @param ectx The encodec context.
+ * @param sr The sample rate to be set.
+ */
+void encodec_set_sample_rate(
+            struct encodec_context * ectx,
+                               int   sr);
 
 /**
  * Reconstructs audio from raw audio data using the specified encodec context.
