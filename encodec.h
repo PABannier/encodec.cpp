@@ -250,3 +250,5 @@ bool encodec_decompress_audio(
  */
 void encodec_free(
             struct encodec_context * ectx);
+
+void encodec_set_sample_rate(struct encodec_context * ectx, int sample_rate);
