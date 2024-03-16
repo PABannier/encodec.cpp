@@ -35,7 +35,7 @@ typedef enum {
     decode = 2,
 } encodec_run_mode;
 
-void print_tensor(struct ggml_tensor * a) {
+static void print_encodec_tensor(struct ggml_tensor * a) {
     float sum = 0;
     float maxv = -INFINITY;
     float minv = INFINITY;
@@ -1445,4 +1445,8 @@ void encodec_free(struct encodec_context * ectx) {
 
 void encodec_set_target_bandwidth(struct encodec_context * ectx, int bandwidth) {
     ectx->model.hparams.bandwidth = bandwidth;
+}
+
+void encodec_set_sample_rate(struct encodec_context * ectx, int sample_rate) {
+    ectx->model.hparams.sr = sample_rate;
 }
