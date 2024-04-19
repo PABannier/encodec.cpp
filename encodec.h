@@ -193,6 +193,17 @@ struct encodec_context *encodec_load_model(
     int n_gpu_layers);
 
 /**
+ * Loads an encodec model from an opened input file stream.
+ *
+ * @param fin The input file stream to read the encodec model from. The pointer in the file should be placed at the model data.
+ * @param n_gpu_layers The number of GPU layers to use.
+ * @return A pointer to the encodec context struct.
+ */
+struct encodec_context *encodec_load_model(
+    std::ifstream &fin,
+    int n_gpu_layers);
+
+/**
  * Sets the target bandwidth for the given encodec context.
  *
  * @param ectx The encodec context to set the target bandwidth for.
