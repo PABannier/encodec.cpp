@@ -257,21 +257,13 @@ static struct ggml_tensor *forward_pass_lstm_unilayer(
     return hs;
 }
 
-bool encodec_load_model_weights(const std::string &fname, encodec_model &model, int n_gpu_layers) {
-    fprintf(stderr, "%s: loading model from '%s'\n", __func__, fname.c_str());
-
-    auto infile = std::ifstream(fname, std::ios::binary);
-    if (!infile) {
-        fprintf(stderr, "%s: failed to open '%s'\n", __func__, fname.c_str());
-        return false;
-    }
-
+bool encodec_load_model_weights(std::ifstream &infile, encodec_model &model, int n_gpu_layers) {
     // verify magic (i.e. ggml signature in hex format)
     {
         uint32_t magic;
         read_safe(infile, magic);
         if (magic != ENCODEC_FILE_MAGIC) {
-            fprintf(stderr, "%s: invalid model file '%s' (bad magic)\n", __func__, fname.c_str());
+            fprintf(stderr, "%s: invalid model file (bad magic)\n", __func__);
             return false;
         }
     }
@@ -312,8 +304,8 @@ bool encodec_load_model_weights(const std::string &fname, encodec_model &model, 
     // in order to save memory and also to speed up the computation
     ggml_type wtype = ggml_ftype_to_ggml_type((ggml_ftype)(model.hparams.ftype));
     if (wtype == GGML_TYPE_COUNT) {
-        fprintf(stderr, "%s: invalid model file '%s' (bad ftype value %d)\n",
-                __func__, fname.c_str(), model.hparams.ftype);
+        fprintf(stderr, "%s: invalid model file (bad ftype value %d)\n",
+                __func__, model.hparams.ftype);
         return 1;
     }
 
@@ -1341,13 +1333,48 @@ bool encodec_decompress_audio(
     return true;
 }
 
-struct encodec_context *encodec_load_model(const std::string &model_path, int n_gpu_layers) {
+struct encodec_context *encodec_load_model(std::ifstream &fin, int n_gpu_layers) {
     int64_t t_start_load_us = ggml_time_us();
 
     struct encodec_context *ectx = new encodec_context();
 
     ectx->model = encodec_model();
-    if (!encodec_load_model_weights(model_path, ectx->model, n_gpu_layers)) {
+    if (!encodec_load_model_weights(fin, ectx->model, n_gpu_layers)) {
+        fprintf(stderr, "%s: failed to load model weights\n", __func__);
+        return {};
+    }
+
+    // pre-compute the number of codebooks required
+    int bandwidth = ectx->model.hparams.bandwidth;
+    int sr = ectx->model.hparams.sr;
+
+    int hop_length = 1;
+    for (int i = 0; i < 4; i++) {
+        hop_length *= ectx->model.hparams.ratios[i];
+    }
+    ectx->model.hparams.hop_length = hop_length;
+
+    ectx->model.hparams.n_q = get_num_codebooks(bandwidth, hop_length, sr);
+    fprintf(stderr, "%s: n_q = %d\n", __func__, ectx->model.hparams.n_q);
+
+    ectx->t_load_us = ggml_time_us() - t_start_load_us;
+
+    return ectx;
+}
+
+struct encodec_context *encodec_load_model(const std::string &model_path, int n_gpu_layers) {
+    int64_t t_start_load_us = ggml_time_us();
+
+    auto infile = std::ifstream(model_path, std::ios::binary);
+    if (!infile) {
+        fprintf(stderr, "%s: failed to open '%s'\n", __func__, model_path.c_str());
+        return nullptr;
+    }
+
+    struct encodec_context *ectx = new encodec_context();
+
+    ectx->model = encodec_model();
+    if (!encodec_load_model_weights(infile, ectx->model, n_gpu_layers)) {
         fprintf(stderr, "%s: failed to load model weights from '%s'\n", __func__, model_path.c_str());
         return {};
     }
