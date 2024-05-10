@@ -33,42 +33,6 @@ extern "C" {
 #endif
     struct encodec_context;
 
-    struct encodec_hparams {
-        // The number of input channels is always 1 (mono).
-        int32_t in_channels = 1;
-        // The hidden dimension for the codebook.
-        int32_t hidden_dim = 128;
-        // The number of filters for the first convolution.
-        int32_t n_filters = 32;
-        // The filter size for upsampling and downsampling.
-        int32_t ratios[4] = {8, 5, 4, 2};
-        // The kernel size for the first convolution.
-        int32_t kernel_size = 7;
-        // The kernel size for the residual blocks.
-        int32_t residual_kernel_size = 3;
-        // Compression
-        int32_t compress = 2;
-        // The number of layers in the LSTM modules.
-        int32_t n_lstm_layers = 2;
-        // The stride of the first convolution.
-        int32_t stride = 1;
-
-        // The dimension of the codebook.
-        int32_t n_bins = 1024;
-        // The sample rate of the model.
-        int32_t sr = 24000;
-        // The bandwidth.
-        int32_t bandwidth = 24;
-
-        // The number of codebooks.
-        int32_t n_q = 32;
-        // The product of the ratios.
-        int32_t hop_length = 1;
-
-        // File type of model weights.
-        int32_t ftype;
-    };
-
     struct encodec_statistics {
         // The time taken to load the model.
         int64_t t_load_us;
@@ -162,10 +126,10 @@ extern "C" {
     */
     float * encodec_get_audio(
         struct encodec_context *ectx);
-    
+
     /**
      * Gets the size of the audio data from the given encodec context.
-     * 
+     *
      * @param ectx The encodec context to get the audio size from.
      * @return The size of the audio data.
     */
@@ -180,10 +144,10 @@ extern "C" {
     */
     int32_t * encodec_get_codes(
         struct encodec_context *ectx);
-    
+
     /**
      * Gets the size of the code data from the given encodec context.
-     * 
+     *
      * @param ectx The encodec context to get the code size from.
      * @return The size of the code data.
     */
