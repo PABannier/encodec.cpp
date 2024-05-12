@@ -407,17 +407,17 @@ bool encodec_load_model_weights(std::ifstream &infile, encodec_model &model, int
 
         const int32_t qntvr = hparams.ftype / GGML_QNT_VERSION_FACTOR;
 
-        printf("%s: in_channels = %d\n", __func__, hparams.in_channels);
-        printf("%s: hidden_dim  = %d\n", __func__, hparams.hidden_dim);
-        printf("%s: n_filters   = %d\n", __func__, hparams.n_filters);
-        printf("%s: kernel_size = %d\n", __func__, hparams.kernel_size);
-        printf("%s: res_kernel  = %d\n", __func__, hparams.residual_kernel_size);
-        // printf("%s: ratios      = %d\n", __func__, hparams.ratios);
-        printf("%s: n_bins      = %d\n", __func__, hparams.n_bins);
-        printf("%s: bandwidth   = %d\n", __func__, hparams.bandwidth);
-        printf("%s: sample_rate = %d\n", __func__, hparams.sr);
-        printf("%s: ftype       = %d\n", __func__, hparams.ftype);
-        printf("%s: qntvr       = %d\n", __func__, qntvr);
+        // printf("%s: in_channels = %d\n", __func__, hparams.in_channels);
+        // printf("%s: hidden_dim  = %d\n", __func__, hparams.hidden_dim);
+        // printf("%s: n_filters   = %d\n", __func__, hparams.n_filters);
+        // printf("%s: kernel_size = %d\n", __func__, hparams.kernel_size);
+        // printf("%s: res_kernel  = %d\n", __func__, hparams.residual_kernel_size);
+        // // printf("%s: ratios      = %d\n", __func__, hparams.ratios);
+        // printf("%s: n_bins      = %d\n", __func__, hparams.n_bins);
+        // printf("%s: bandwidth   = %d\n", __func__, hparams.bandwidth);
+        // printf("%s: sample_rate = %d\n", __func__, hparams.sr);
+        // printf("%s: ftype       = %d\n", __func__, hparams.ftype);
+        // printf("%s: qntvr       = %d\n", __func__, qntvr);
 
         hparams.ftype %= GGML_QNT_VERSION_FACTOR;
     }
