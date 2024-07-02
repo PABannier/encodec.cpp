@@ -25,6 +25,10 @@ Author: Pierre-Antoine Bannier
 
 static const size_t MB = 1024 * 1024;
 
+static void print_tensor(struct ggml_tensor *t) {
+    printf("tensor %s: %lld %lld %lld\n", t->name, t->ne[0], t->ne[1], t->ne[2]);
+}
+
 struct vocos_params {
     // Number of threads used for inference
     int32_t n_threads = std::min(4, (int32_t) std::thread::hardware_concurrency());
@@ -146,7 +150,7 @@ struct vocos_context {
     struct ggml_tensor * encoded = NULL;
     struct ggml_tensor * decoded  = NULL;
 
-    std::vector<int32_t> out_codes;
+    std::vector<float> features;
     std::vector<float>   out_audio;
 
     // statistics
@@ -517,37 +521,43 @@ struct ggml_tensor *vocos_ada_layer_norm(
 }
 
 struct ggml_tensor *vocos_forward_encoder(
-    struct vocos_context *vctx,
-    struct ggml_context *ctx0,
-    struct ggml_tensor *inp) {
-    if (!inp) {
-        fprintf(stderr, "%s: invalid input tensor\n", __func__);
+    struct vocos_context * vctx,
+    struct ggml_context  * ctx0,
+    struct ggml_tensor   * codes) {
+
+    if (!codes) {
+        fprintf(stderr, "%s: invalid codes tensor\n", __func__);
         return nullptr;
     }
 
-    const int T   = inp->ne[0];
-    const int n_q = inp->ne[1];
+    const auto & model  = vctx->model.feature_extractor;
+    const auto & allocr = vctx->allocr;
 
-    const int n_bins = 1024; // TODO (PAB): hardcoded
+    const int seq_length = codes->ne[0];
+    const int        n_q = codes->ne[1];
+    const int        dim = model.codebook_weights->ne[0];
 
-    const auto &model = vctx->model.feature_extractor;
-    const auto &allocr = vctx->allocr;
+    // codes: [seq_length, n_q] -> [n_q, seq_length]
+    codes = ggml_transpose(ctx0, codes);
 
-    // offsets: [n_q]
-    struct ggml_tensor *offsets = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_q);
-    if (!ggml_allocr_is_measure(allocr)) {
-        for (int32_t i = 0; i < n_q; i++) {
-            int32_t v = i * n_bins;
-            ggml_backend_tensor_set(offsets, &v, i * sizeof(int32_t), sizeof(i));
-        }
+    struct ggml_tensor *features = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, dim, n_q, seq_length);
+    ggml_allocr_alloc(allocr, features);
+
+    for (int t = 0; t < seq_length; t++) {
+        // [n_q]
+        size_t offset = t * codes->nb[1];
+        struct ggml_tensor *idxs = ggml_view_1d(ctx0, codes, n_q, offset);
+
+        // [dim, n_q]
+        struct ggml_tensor *f_t = ggml_get_rows(ctx0, model.codebook_weights, idxs);
+
+        features = ggml_set_2d(ctx0, features, f_t, features->nb[1], t*features->nb[2]);
     }
 
-    // inp: [n_bins, n_q]
-    // embeddings_idxs: [n_q, n_bins]
-    struct ggml_tensor *embeddings_idxs = ggml_add(ctx0, inp, offsets);
-    // [n_q, n_bins, dim]
-    struct ggml_tensor *features = ggml_get_rows(ctx0, model.codebook_weights, embeddings_idxs);
-    // [n_bins, dim]
+    // [dim, n_q, seq_length] -> [n_q, dim, seq_length]
+    features = ggml_cont(ctx0, ggml_permute(ctx0, features, 1, 0, 2, 3));
+
+    // [1, dim, seq_length]
     features = ggml_sum_rows(ctx0, features);
 
     return features;
@@ -621,12 +631,13 @@ struct ggml_cgraph *vocos_build_graph(
     const vocos_run_mode mode) {
     assert(mode == vocos_run_mode::full || mode == vocos_run_mode::encode);
 
-    const auto &model = vctx->model;
-    const auto &hparams = model.hparams;
-    const auto &allocr = vctx->allocr;
+    const auto & model   = vctx->model;
+    const auto & hparams = model.hparams;
+    const auto & allocr  = vctx->allocr;
 
-    const int n_q = 8;  // TODO (PAB): hardcoded
-    const int T = codes.size() / n_q;
+    const int    n_q     = 8;     // TODO (PAB): hardcoded
+    const int n_bins     = 1024;  // TODO (PAB): hardcoded
+    const int seq_length = codes.size() / n_q;
 
     // since we are using ggml-alloc, this buffer only needs enough space to hold the
     // ggml_tensor and ggml_cgraph structs, but not the tensor data
@@ -636,19 +647,25 @@ struct ggml_cgraph *vocos_build_graph(
     struct ggml_init_params ggml_params = {
         /*.mem_size   =*/ buf_size,
         /*.mem_buffer =*/ buf.data(),
-        /*.no_alloc   =*/ true,  // skip allocating as we use ggml_alloc to allocate exact memory requirements
+        /*.no_alloc   =*/ true,
     };
 
     struct ggml_context *ctx0 = ggml_init(ggml_params);
 
     struct ggml_cgraph *gf = ggml_new_graph(ctx0);
 
-    struct ggml_tensor *inp = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, T, n_q);
+    struct ggml_tensor *inp = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, seq_length, n_q);
     ggml_allocr_alloc(allocr, inp);
 
-    // avoid writing to tensors if we are only measuring the memory usage
     if (!ggml_allocr_is_measure(allocr)) {
-        ggml_backend_tensor_set(inp, codes.data(), 0, codes.size() * ggml_element_size(inp));
+        ggml_backend_tensor_set(inp, codes.data(), 0, codes.size() * sizeof(int32_t));
+
+        // add offsets of shape [n_q] broadcasted to inp
+        // inp + offsets
+        for (int i = 0; i < seq_length*n_q; i++) {
+            int32_t v = (i / seq_length) * n_bins;
+            ggml_backend_tensor_set(inp, &v, i * sizeof(int32_t), sizeof(int32_t));
+        }
     }
 
     struct ggml_tensor *encoded = vocos_forward_encoder(vctx, ctx0, inp);
@@ -698,17 +715,13 @@ bool vocos_eval_internal(
     if (ggml_backend_is_cpu(model.backend)) {
         ggml_backend_cpu_set_n_threads(model.backend, n_threads);
     }
-#ifdef GGML_USE_METAL
-    if (ggml_backend_is_metal(model.backend)) {
-        ggml_backend_metal_set_n_cb(model.backend, n_threads);
-    }
-#endif
+
     ggml_backend_graph_compute(model.backend, gf);
 
     return true;
 }
 
-std::vector<int32_t> get_encodec_codes(struct vocos_context *vctx, const float *raw_audio, int n_samples) {
+std::vector<int32_t> get_encodec_codes(struct vocos_context *vctx, const std::vector<float> raw_audio) {
     struct encodec_context * ectx = encodec_load_model(vctx->encodec_path.c_str(), 0, 0);
     if (!ectx) {
         printf("%s: failed to load encodec model\n", __func__);
@@ -721,12 +734,9 @@ std::vector<int32_t> get_encodec_codes(struct vocos_context *vctx, const float *
         return std::vector<int32_t>();
     }
 
-    // const float bandwidths[4] = { 1.5, 3.0, 6.0, 12.0 };
-    // encodec_set_target_bandwidth(ectx, bandwidths[hparams.bandwidth_id]);
-
     encodec_set_target_bandwidth(ectx, 6);
 
-    if (!encodec_compress_audio(ectx, raw_audio, n_samples, vctx->n_threads)) {
+    if (!encodec_compress_audio(ectx, raw_audio.data(), raw_audio.size(), vctx->n_threads)) {
         printf("%s: failed to compress audio\n", __func__);
         return std::vector<int32_t>();
     }
@@ -740,15 +750,14 @@ std::vector<int32_t> get_encodec_codes(struct vocos_context *vctx, const float *
 
 bool vocos_eval(
     struct vocos_context *vctx,
-    const float *raw_audio,
-    const int n_samples,
+    const std::vector<float> raw_audio,
     const int n_threads,
     const vocos_run_mode mode) {
     const int64_t t_start_us = ggml_time_us();
 
     // Encodec forward pass, shape [n_q, T]
     // n_q depends on the bandwidth and the sample rate
-    std::vector<int32_t> codes = get_encodec_codes(vctx, raw_audio, n_samples);
+    std::vector<int32_t> codes = get_encodec_codes(vctx, raw_audio);
 
     // allocate the compute buffer
     {
@@ -770,11 +779,23 @@ bool vocos_eval(
         fprintf(stderr, "%s: compute buffer size: %.2f MB\n\n", __func__, mem_size / 1024.0 / 1024.0);
     }
 
-    // encodec eval
     if (!vocos_eval_internal(vctx, codes, n_threads, mode)) {
         fprintf(stderr, "%s: failed to run encodec eval\n", __func__);
         return false;
     }
+
+    auto &features = vctx->features;
+
+    int out_length = ggml_nelements(vctx->encoded);
+    features.resize(out_length);
+
+    ggml_backend_tensor_get(vctx->encoded, features.data(), 0, out_length * ggml_type_size(vctx->encoded->type));
+
+    float sum = 0.0f;
+    for (int i = 0; i < out_length; i++) {
+        sum += features[i];
+    }
+    printf("%s: sum = %f\n", __func__, sum);
 
     vctx->stats.t_compute_us = ggml_time_us() - t_start_us;
 
@@ -782,32 +803,13 @@ bool vocos_eval(
 }
 
 bool vocos_reconstruct_audio(
-    struct vocos_context *vctx,
-    const float *raw_audio,
-    const int n_samples,
-    int n_threads) {
-    if (raw_audio == nullptr) {
-        std::cerr << "Invalid raw audio buffer" << std::endl;
-        return false;
-    }
-
-    if (!vocos_eval(vctx, raw_audio, n_samples, n_threads, vocos_run_mode::full)) {
+            struct vocos_context *vctx,
+            const std::vector<float> raw_audio,
+            int n_threads) {
+    if (!vocos_eval(vctx, raw_audio, n_threads, vocos_run_mode::encode)) {
         std::cerr << "Failed to evaluate model" << std::endl;
         return false;
     }
-
-    if (!vctx->decoded) {
-        std::cerr << "Failed to reconstruct audio" << std::endl;
-        return false;
-    }
-
-    struct ggml_tensor *decoded = vctx->decoded;
-    auto &out_audio = vctx->out_audio;
-
-    int out_length = decoded->ne[0];
-    out_audio.resize(out_length);
-
-    ggml_backend_tensor_get(decoded, out_audio.data(), 0, out_length * ggml_type_size(decoded->type));
 
     return true;
 }
@@ -904,17 +906,13 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    original_audio_arr.resize(50000);
+
     // reconstruct audio
-    if (!vocos_reconstruct_audio(vctx, original_audio_arr.data(), original_audio_arr.size(), params.n_threads)) {
+    if (!vocos_reconstruct_audio(vctx, original_audio_arr, params.n_threads)) {
         std::cerr << "Failed to reconstruct audio" << std::endl;
         return 1;
     }
-
-    // write reconstructed audio on disk
-    float * audio_data = vctx->out_audio.data();
-    std::vector<float> audio_arr(audio_data, audio_data + vctx->out_audio.size());
-    audio_arr.resize(original_audio_arr.size());
-    write_wav_on_disk(audio_arr, params.output_path);
 
     // report timing
     {
