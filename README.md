@@ -32,7 +32,7 @@ https://github.com/PABannier/encodec.cpp/assets/12958149/d11561be-98e9-4504-bba7
 
 ## Usage
 
-Here are the steps for the bark model.
+Here are the steps for the Encodec model.
 
 ### Get the code
 
