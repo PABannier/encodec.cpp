@@ -23,13 +23,9 @@
 #include <thread>
 
 #include "encodec.h"
-
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#include "utils.h"
 
 #define ENCODEC_FILE_MAGIC 'ggml'
-
-static const size_t MB = 1024 * 1024;
 
 struct encodec_hparams {
     // The number of input channels is always 1 (mono).
@@ -197,11 +193,6 @@ typedef enum {
     // Decode an audio from a compressed representation (quantizer decode + decoder)
     decode = 2,
 } encodec_run_mode;
-
-template <typename T>
-static void read_safe(std::ifstream &infile, T &dest) {
-    infile.read((char *)&dest, sizeof(T));
-}
 
 static void ggml_log_callback_default(ggml_log_level level, const char *text, void *user_data) {
     (void)level;

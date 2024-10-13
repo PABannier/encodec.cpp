@@ -23,7 +23,12 @@ set(ENCODEC_LIB encodec)
 
 add_subdirectory(ggml)
 
-add_library(${ENCODEC_LIB} STATIC encodec.cpp encodec.h)
+add_library(
+    ${ENCODEC_LIB} STATIC
+    encodec.cpp
+    encodec.h
+    utils.h
+)
 
 if (ENCODEC_BUILD_EXAMPLES)
     add_subdirectory(examples)
