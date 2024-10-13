@@ -23,6 +23,7 @@
 #include <thread>
 
 #include "encodec.h"
+#include "ops.h"
 #include "utils.h"
 
 #define ENCODEC_FILE_MAGIC 'ggml'
@@ -201,75 +202,6 @@ static void ggml_log_callback_default(ggml_log_level level, const char *text, vo
     fflush(stderr);
 }
 
-static void encodec_sigmoid_impl(
-    struct ggml_tensor *dst,
-    const struct ggml_tensor *src,
-    int ith,
-    int nth,
-    void *userdata) {
-    GGML_ASSERT(userdata == NULL);
-    GGML_ASSERT(ggml_are_same_shape(dst, src));
-    GGML_ASSERT(ggml_is_contiguous(dst));
-    GGML_ASSERT(ggml_is_contiguous(src));
-
-    const float *src_data = ggml_get_data_f32(src);
-    float *dst_data = ggml_get_data_f32(dst);
-
-    const int ne = (int)ggml_nelements(dst);
-    const int dr = (ne + nth - 1) / nth;
-    const int ie0 = dr * ith;
-    const int ie1 = std::min(ie0 + dr, ne);
-
-    for (int i = ie0; i < ie1; ++i) {
-        dst_data[i] = 1.0f / (1.0f + expf(-src_data[i]));
-    }
-}
-
-static struct ggml_tensor *encodec_sigmoid(
-    struct ggml_context *ctx,
-    struct ggml_tensor *x) {
-    return ggml_map_custom1(ctx, x, encodec_sigmoid_impl, GGML_N_TASKS_MAX, NULL);
-}
-
-static int get_extra_padding_for_conv_1d(
-    struct ggml_tensor *inp,
-    float kernel_size,
-    float stride,
-    float padding_total) {
-    float length = inp->ne[0];
-    float n_frames = (length - kernel_size + padding_total) / stride + 1.0f;
-    int ideal_length = (ceilf(n_frames) - 1) * stride + (kernel_size - padding_total);
-    return ideal_length - length;
-}
-
-static struct ggml_tensor *pad_1d(
-    struct ggml_context *ctx0,
-    struct ggml_tensor *inp,
-    int padding_left,
-    int padding_right) {
-    int length = inp->ne[0];
-    int dim = inp->ne[1];
-
-    const int max_pad = std::max(padding_left, padding_right);
-    int extra_pad = 0;
-
-    if (length <= max_pad) {
-        extra_pad = max_pad - length + 1;
-
-        // constant padding
-        struct ggml_tensor *out = ggml_new_tensor_2d(ctx0, inp->type, length + extra_pad, dim);
-        ggml_set_zero(out);
-        out = ggml_set_2d(ctx0, out, inp, out->nb[1], 0);
-    }
-
-    struct ggml_tensor *padded = ggml_pad_reflec_1d(ctx0, inp, padding_left, padding_right);
-
-    const int end = padded->ne[0] - extra_pad;
-    struct ggml_tensor *dest = ggml_view_2d(ctx0, padded, end, dim, padded->nb[1], 0);
-
-    return dest;
-}
-
 static int32_t get_num_codebooks(float bandwidth, int hop_length, float sample_rate) {
     // The number of codebooks is determined by the bandwidth selected.
     // Supported bandwidths are 1.5kbps (n_q = 2), 3 kbps (n_q = 4), 6 kbps (n_q = 8),
@@ -285,73 +217,6 @@ static int32_t get_num_quantizers_for_bandwidth(int bins, float frame_rate, floa
     float bw_per_q = get_bandwidth_per_quantizer(bins, frame_rate);
     int32_t n_q = MAX(1, floorf(bandwidth * 1000 / bw_per_q));
     return n_q;
-}
-
-static struct ggml_tensor *unpad_1d(
-    struct ggml_context *ctx0,
-    struct ggml_tensor *inp,
-    int padding_left,
-    int padding_right) {
-    int length = inp->ne[0];
-    int dim = inp->ne[1];
-
-    assert(padding_left >= 0);
-    assert(padding_right >= 0);
-    assert(padding_left + padding_right <= length);
-
-    int end = length - padding_right;
-
-    int offset = padding_left * inp->nb[1];
-    struct ggml_tensor *dst = ggml_view_2d(ctx0, inp, end, dim, inp->nb[1], offset);
-
-    return dst;
-}
-
-static struct ggml_tensor *strided_conv_1d(
-    ggml_context *ctx0,
-    ggml_tensor *inp,
-    ggml_tensor *conv_w,
-    ggml_tensor *conv_b,
-    int stride) {
-    int kernel_size = conv_w->ne[0];
-    int padding_total = kernel_size - stride;
-    int extra_padding = get_extra_padding_for_conv_1d(inp, kernel_size, stride, padding_total);
-
-    struct ggml_tensor *padded_inp = pad_1d(ctx0, inp, padding_total, extra_padding);
-    struct ggml_tensor *dst = ggml_conv_1d(ctx0, conv_w, padded_inp, stride, 0, 1);
-
-    // add bias
-    dst = ggml_transpose(ctx0, dst);
-    dst = ggml_add(ctx0, ggml_repeat(ctx0, conv_b, dst), dst);
-    dst = ggml_cont(ctx0, ggml_transpose(ctx0, dst));
-
-    return dst;
-}
-
-static struct ggml_tensor *strided_conv_transpose_1d(
-    struct ggml_context *ctx0,
-    struct ggml_tensor *inp,
-    struct ggml_tensor *conv_w,
-    struct ggml_tensor *conv_b,
-    int stride) {
-    struct ggml_tensor *dst = ggml_conv_transpose_1d(
-        ctx0, conv_w, inp, stride, 0 /* p0 */, 1 /* d0 */);
-
-    // add bias
-    dst = ggml_transpose(ctx0, dst);
-    dst = ggml_add(ctx0, ggml_repeat(ctx0, conv_b, dst), dst);
-    dst = ggml_cont(ctx0, ggml_transpose(ctx0, dst));
-
-    int kernel_size = conv_w->ne[0];
-    int padding_total = kernel_size - stride;
-
-    int padding_right = ceilf(padding_total);
-    int padding_left = padding_total - padding_right;
-
-    struct ggml_tensor *unpadded = unpad_1d(ctx0, dst, padding_left, padding_right);
-    unpadded = ggml_cont(ctx0, unpadded);
-
-    return unpadded;
 }
 
 static struct ggml_tensor *forward_pass_lstm_unilayer(

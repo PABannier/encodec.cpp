@@ -27,6 +27,8 @@ add_library(
     ${ENCODEC_LIB} STATIC
     encodec.cpp
     encodec.h
+    ops.cpp
+    ops.h
     utils.h
 )
 
