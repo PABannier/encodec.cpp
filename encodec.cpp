@@ -23,9 +23,13 @@
 #include <thread>
 
 #include "encodec.h"
+
+#include "decoder.h"
+#include "encoder.h"
 #include "lstm.h"
 #include "ops.h"
 #include "utils.h"
+#include "quantizer.h"
 
 #define ENCODEC_FILE_MAGIC 'ggml'
 
@@ -72,75 +76,6 @@ struct encodec_hparams {
 
     // File type of model weights.
     int32_t ftype;
-};
-
-// res + downsample block at some ratio
-struct encodec_encoder_block {
-    // conv1
-    struct ggml_tensor *conv_1_w;
-    struct ggml_tensor *conv_1_b;
-
-    // conv2
-    struct ggml_tensor *conv_2_w;
-    struct ggml_tensor *conv_2_b;
-
-    // shortcut
-    struct ggml_tensor *conv_sc_w;
-    struct ggml_tensor *conv_sc_b;
-
-    // downsampling layers
-    struct ggml_tensor *ds_conv_w;
-    struct ggml_tensor *ds_conv_b;
-};
-
-struct encodec_encoder {
-    struct ggml_tensor *init_conv_w;
-    struct ggml_tensor *init_conv_b;
-
-    encodec_lstm lstm;
-
-    struct ggml_tensor *final_conv_w;
-    struct ggml_tensor *final_conv_b;
-
-    std::vector<encodec_encoder_block> blocks;
-};
-
-struct encodec_quant_block {
-    struct ggml_tensor *embed;
-};
-
-struct encodec_quantizer {
-    std::vector<encodec_quant_block> blocks;
-};
-
-struct encodec_decoder_block {
-    // upsampling layers
-    struct ggml_tensor *us_conv_w;
-    struct ggml_tensor *us_conv_b;
-
-    // conv1
-    struct ggml_tensor *conv_1_w;
-    struct ggml_tensor *conv_1_b;
-
-    // conv2
-    struct ggml_tensor *conv_2_w;
-    struct ggml_tensor *conv_2_b;
-
-    // shortcut
-    struct ggml_tensor *conv_sc_w;
-    struct ggml_tensor *conv_sc_b;
-};
-
-struct encodec_decoder {
-    struct ggml_tensor *init_conv_w;
-    struct ggml_tensor *init_conv_b;
-
-    encodec_lstm lstm;
-
-    struct ggml_tensor *final_conv_w;
-    struct ggml_tensor *final_conv_b;
-
-    std::vector<encodec_decoder_block> blocks;
 };
 
 struct encodec_model {
@@ -610,8 +545,6 @@ bool encodec_load_model_weights(std::ifstream &infile, encodec_model &model, int
                 ggml_backend_tensor_set(tensor, read_buf.data(), 0, ggml_nbytes(tensor));
             }
 
-            // printf("%48s - [%5d, %5d, %5d], type = %6s, %6.2f MB\n", name.data(), ne[0], ne[1], ne[2], ftype == 0 ? "float" : "f16", ggml_nbytes(tensor)/1024.0/1024.0);
-
             total_size += ggml_nbytes(tensor);
             model.n_loaded++;
         }
@@ -625,285 +558,6 @@ bool encodec_load_model_weights(std::ifstream &infile, encodec_model &model, int
     return true;
 }
 
-struct ggml_tensor *encodec_forward_encoder(struct encodec_context *ectx,
-                                            struct ggml_context *ctx0,
-                                            struct ggml_tensor *inp) {
-    if (!inp) {
-        fprintf(stderr, "%s: null input tensor\n", __func__);
-        return NULL;
-    }
-
-    const auto & model   = ectx->model;
-    const auto & hparams = model.hparams;
-    const auto & allocr  = ectx->allocr;
-
-    const int * ratios      = hparams.ratios;
-    const int kernel_size   = hparams.kernel_size;
-    const int res_kernel_sz = hparams.residual_kernel_size;
-    const int stride        = hparams.stride;
-
-    struct ggml_tensor *inpL = strided_conv_1d(
-        ctx0, inp, model.encoder.init_conv_w, model.encoder.init_conv_b, stride);
-
-    for (int layer_ix = 0; layer_ix < 4; layer_ix++) {
-        encodec_encoder_block block = model.encoder.blocks[layer_ix];
-
-        struct ggml_tensor *current = inpL;
-
-        // shortcut
-        struct ggml_tensor *shortcut = strided_conv_1d(
-            ctx0, inpL, block.conv_sc_w, block.conv_sc_b, stride);
-
-        // conv1
-        current = ggml_elu(ctx0, current);
-
-        current = strided_conv_1d(
-            ctx0, current, block.conv_1_w, block.conv_1_b, stride);
-
-        // conv2
-        current = ggml_elu(ctx0, current);
-
-        current = strided_conv_1d(
-            ctx0, current, block.conv_2_w, block.conv_2_b, stride);
-
-        // residual connection
-        inpL = ggml_add(ctx0, current, shortcut);
-
-        // downsampling layers
-        inpL = ggml_elu(ctx0, inpL);
-
-        inpL = strided_conv_1d(
-            ctx0, inpL, block.ds_conv_w, block.ds_conv_b, ratios[3 - layer_ix]);
-    }
-
-    // lstm
-    {
-        struct ggml_tensor *cur = inpL;
-
-        const encodec_lstm lstm = model.encoder.lstm;
-
-        // first lstm layer
-        struct ggml_tensor *hs1 = forward_pass_lstm_unilayer(
-            ctx0, allocr, cur, lstm.l0_ih_w, lstm.l0_hh_w,
-            lstm.l0_ih_b, lstm.l0_hh_b);
-
-        // second lstm layer
-        struct ggml_tensor *out = forward_pass_lstm_unilayer(
-            ctx0, allocr, hs1, lstm.l1_ih_w, lstm.l1_hh_w,
-            lstm.l1_ih_b, lstm.l1_hh_b);
-
-        inpL = ggml_add(ctx0, inpL, out);
-    }
-
-    // final conv
-    inpL = ggml_elu(ctx0, inpL);
-
-    struct ggml_tensor *encoded_inp = strided_conv_1d(
-        ctx0, inpL, model.encoder.final_conv_w, model.encoder.final_conv_b, stride);
-
-    return encoded_inp;
-}
-
-struct ggml_tensor *encodec_forward_quantizer_encode(struct encodec_context *ectx,
-                                                     struct ggml_context *ctx0,
-                                                     struct ggml_tensor *encoded_inp) {
-    if (!encoded_inp) {
-        fprintf(stderr, "%s: null input tensor\n", __func__);
-        return NULL;
-    }
-
-    const auto & model   = ectx->model;
-    const auto & hparams = model.hparams;
-    const auto & allocr  = ectx->allocr;
-
-    const int n_bins      = hparams.n_bins;
-    const int sr          = hparams.sr;
-    const int bandwidth   = hparams.bandwidth;
-    const int hop_length  = hparams.hop_length;
-
-    const int frame_rate = (int)ceilf(sr / hop_length);
-    const int n_q = get_num_quantizers_for_bandwidth(n_bins, frame_rate, bandwidth);
-
-    const int seq_length = encoded_inp->ne[0];
-
-    struct ggml_tensor *codes = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, seq_length, n_q);
-    ggml_allocr_alloc(allocr, codes);
-
-    struct ggml_tensor *dist_scale = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, 1);
-    ggml_allocr_alloc(allocr, dist_scale);
-
-    if (!ggml_allocr_is_measure(allocr)) {
-        float s = -2.0f;
-        ggml_backend_tensor_set(dist_scale, &s, 0, sizeof(s));
-    }
-
-    struct ggml_tensor *inpL = ggml_cont(ctx0, ggml_transpose(ctx0, encoded_inp));
-    struct ggml_tensor *residual = inpL;
-    struct ggml_tensor *indices;
-
-    for (int i = 0; i < n_q; i++) {
-        encodec_quant_block block = model.quantizer.blocks[i];
-
-        // compute distance
-        // [seq_length, n_bins]
-        struct ggml_tensor *dp = ggml_scale(
-            ctx0, ggml_mul_mat(ctx0, block.embed, residual), dist_scale);
-
-        // [n_bins]
-        struct ggml_tensor *sqr_embed = ggml_sqr(ctx0, block.embed);
-        struct ggml_tensor *sqr_embed_nrm = ggml_sum_rows(ctx0, sqr_embed);
-
-        // [seq_length]
-        struct ggml_tensor *sqr_inp = ggml_sqr(ctx0, residual);
-        struct ggml_tensor *sqr_inp_nrm = ggml_sum_rows(ctx0, sqr_inp);
-
-        // [seq_length, n_bins]
-        struct ggml_tensor *dist = ggml_add(ctx0, ggml_repeat(ctx0, sqr_inp_nrm, dp), dp);
-        dist = ggml_add(ctx0, ggml_repeat(ctx0, ggml_transpose(ctx0, sqr_embed_nrm), dist), dist);
-        dist = ggml_neg(ctx0, dist);
-
-        // take the argmax over the column dimension
-        // [seq_length]
-        indices = ggml_argmax(ctx0, dist);
-
-        // look up in embedding table
-        struct ggml_tensor *quantized = ggml_get_rows(ctx0, block.embed, indices);
-
-        residual = ggml_sub(ctx0, residual, quantized);
-
-        codes = ggml_set_1d(ctx0, codes, indices, i * codes->nb[1]);
-    }
-
-    return codes;
-}
-
-struct ggml_tensor *encodec_forward_quantizer_decode(struct encodec_context *ectx,
-                                                     struct ggml_context *ctx0,
-                                                     struct ggml_tensor *codes) {
-    if (!codes) {
-        fprintf(stderr, "%s: null input tensor\n", __func__);
-        return NULL;
-    }
-
-    const auto & model   = ectx->model;
-    const auto & hparams = model.hparams;
-    const auto &allocr   = ectx->allocr;
-
-    const int hidden_dim = hparams.hidden_dim;
-    const int seq_length = codes->ne[0];
-
-    const int n_bins     = hparams.n_bins;
-    const int sr         = hparams.sr;
-    const int bandwidth  = hparams.bandwidth;
-    const int hop_length = hparams.hop_length;
-
-    const int frame_rate = (int)ceilf(sr / hop_length);
-    const int n_q = get_num_quantizers_for_bandwidth(n_bins, frame_rate, bandwidth);
-
-    assert(n_q == codes->ne[1]);
-
-    struct ggml_tensor *quantized_out = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
-    ggml_allocr_alloc(allocr, quantized_out);
-
-    if (!ggml_allocr_is_measure(allocr)) {
-        quantized_out = ggml_set_zero(quantized_out);
-    }
-
-    for (int i = 0; i < n_q; i++) {
-        encodec_quant_block block = model.quantizer.blocks[i];
-
-        struct ggml_tensor *indices = ggml_view_1d(ctx0, codes, seq_length, i * codes->nb[1]);
-        struct ggml_tensor *quantized = ggml_get_rows(ctx0, block.embed, indices);
-
-        quantized_out = ggml_add(ctx0, quantized_out, quantized);
-    }
-
-    quantized_out = ggml_cont(ctx0, ggml_transpose(ctx0, quantized_out));
-
-    return quantized_out;
-}
-
-struct ggml_tensor *encodec_forward_decoder(struct encodec_context *ectx,
-                                            struct ggml_context *ctx0,
-                                            struct ggml_tensor *quantized_out) {
-    if (!quantized_out) {
-        fprintf(stderr, "%s: null input tensor\n", __func__);
-        return NULL;
-    }
-
-    const auto & model   = ectx->model;
-    const auto & hparams = model.hparams;
-    const auto & allocr  = ectx->allocr;
-
-    const int *ratios       = hparams.ratios;
-    const int kernel_size   = hparams.kernel_size;
-    const int res_kernel_sz = hparams.residual_kernel_size;
-    const int stride        = hparams.stride;
-
-    struct ggml_tensor *inpL = strided_conv_1d(
-        ctx0, quantized_out, model.decoder.init_conv_w,
-        model.decoder.init_conv_b, stride);
-
-    // lstm
-    {
-        struct ggml_tensor *cur = inpL;
-
-        const encodec_lstm lstm = model.decoder.lstm;
-
-        // first lstm layer
-        struct ggml_tensor *hs1 = forward_pass_lstm_unilayer(
-            ctx0, allocr, cur, lstm.l0_ih_w, lstm.l0_hh_w,
-            lstm.l0_ih_b, lstm.l0_hh_b);
-
-        // second lstm layer
-        struct ggml_tensor *out = forward_pass_lstm_unilayer(
-            ctx0, allocr, hs1, lstm.l1_ih_w, lstm.l1_hh_w,
-            lstm.l1_ih_b, lstm.l1_hh_b);
-
-        inpL = ggml_add(ctx0, inpL, out);
-    }
-
-    for (int layer_ix = 0; layer_ix < 4; layer_ix++) {
-        encodec_decoder_block block = model.decoder.blocks[layer_ix];
-
-        // upsampling layers
-        inpL = ggml_elu(ctx0, inpL);
-
-        inpL = strided_conv_transpose_1d(
-            ctx0, inpL, block.us_conv_w, block.us_conv_b, ratios[layer_ix]);
-
-        struct ggml_tensor *current = inpL;
-
-        // shortcut
-        struct ggml_tensor *shortcut = strided_conv_1d(
-            ctx0, inpL, block.conv_sc_w, block.conv_sc_b, stride);
-
-        // conv1
-        current = ggml_elu(ctx0, current);
-
-        current = strided_conv_1d(
-            ctx0, current, block.conv_1_w, block.conv_1_b, stride);
-
-        // conv2
-        current = ggml_elu(ctx0, current);
-
-        current = strided_conv_1d(
-            ctx0, current, block.conv_2_w, block.conv_2_b, stride);
-
-        // residual connection
-        inpL = ggml_add(ctx0, current, shortcut);
-    }
-
-    // final conv
-    inpL = ggml_elu(ctx0, inpL);
-
-    struct ggml_tensor *decoded_inp = strided_conv_1d(
-        ctx0, inpL, model.decoder.final_conv_w,
-        model.decoder.final_conv_b, stride);
-
-    return decoded_inp;
-}
-
 struct ggml_cgraph *encodec_build_graph(struct encodec_context *ectx,
                                         const float * inp_audio,
                                         const int n_samples,
@@ -914,7 +568,16 @@ struct ggml_cgraph *encodec_build_graph(struct encodec_context *ectx,
     const auto & hparams = model.hparams;
     const auto & allocr  = ectx->allocr;
 
-    const int n_q = hparams.n_q;
+    const int *ratios       = hparams.ratios;
+    const int kernel_size   = hparams.kernel_size;
+    const int res_kernel_sz = hparams.residual_kernel_size;
+    const int stride        = hparams.stride;
+    const int n_bins        = hparams.n_bins;
+    const int n_q           = hparams.n_q;
+    const int sr            = hparams.sr;
+    const int bandwidth     = hparams.bandwidth;
+    const int hop_length    = hparams.hop_length;
+    const int hidden_dim    = hparams.hidden_dim;
 
     // since we are using ggml-alloc, this buffer only needs enough space to hold the
     // ggml_tensor and ggml_cgraph structs, but not the tensor data
@@ -939,10 +602,25 @@ struct ggml_cgraph *encodec_build_graph(struct encodec_context *ectx,
         ggml_backend_tensor_set(inp, inp_audio, 0, n_samples * ggml_element_size(inp));
     }
 
-    struct ggml_tensor *encoded   = encodec_forward_encoder(ectx, ctx0, inp);
-    struct ggml_tensor *codes     = encodec_forward_quantizer_encode(ectx, ctx0, encoded);
-    struct ggml_tensor *quantized = encodec_forward_quantizer_decode(ectx, ctx0, codes);
-    struct ggml_tensor *decoded   = encodec_forward_decoder(ectx, ctx0, quantized);
+    const struct encodec_encoder *encoder     = &model.encoder;
+    const struct encodec_quantizer *quantizer = &model.quantizer;
+    const struct encodec_decoder *decoder     = &model.decoder;
+
+    struct ggml_tensor * encoded = encodec_forward_encoder(
+        encoder, allocr, ctx0, inp, ratios, kernel_size, res_kernel_sz, stride
+    );
+
+    struct ggml_tensor * codes = encodec_forward_quantizer_encode(
+        quantizer, allocr, ctx0, encoded, n_bins, sr, bandwidth, hop_length
+    );
+
+    struct ggml_tensor * quantized = encodec_forward_quantizer_decode(
+        quantizer, allocr, ctx0, codes, hidden_dim, n_bins, sr, bandwidth, hop_length
+    );
+
+    struct ggml_tensor * decoded = encodec_forward_decoder(
+        decoder, allocr, ctx0, quantized, ratios, kernel_size, res_kernel_sz, stride
+    );
 
     switch (mode) {
         case encodec_run_mode_t::FULL: {
@@ -977,10 +655,15 @@ struct ggml_cgraph *encodec_build_graph(struct encodec_context *ectx, const int3
     const auto & hparams = model.hparams;
     const auto & allocr  = ectx->allocr;
 
-    const int n_bins     = hparams.n_bins;
-    const int sr         = hparams.sr;
-    const int bandwidth  = hparams.bandwidth;
-    const int hop_length = hparams.hop_length;
+    const int n_bins        = hparams.n_bins;
+    const int sr            = hparams.sr;
+    const int bandwidth     = hparams.bandwidth;
+    const int hop_length    = hparams.hop_length;
+    const int hidden_dim    = hparams.hidden_dim;
+    const int * ratios      = hparams.ratios;
+    const int kernel_size   = hparams.kernel_size;
+    const int res_kernel_sz = hparams.residual_kernel_size;
+    const int stride        = hparams.stride;
 
     const int frame_rate = (int)ceilf(sr / hop_length);
     const int n_q = get_num_quantizers_for_bandwidth(n_bins, frame_rate, bandwidth);
@@ -1015,8 +698,16 @@ struct ggml_cgraph *encodec_build_graph(struct encodec_context *ectx, const int3
         ggml_backend_tensor_set(inp_codes, codes, 0, N * n_q * ggml_element_size(inp_codes));
     }
 
-    struct ggml_tensor *quantized = encodec_forward_quantizer_decode(ectx, ctx0, inp_codes);
-    struct ggml_tensor *decoded = encodec_forward_decoder(ectx, ctx0, quantized);
+    const struct encodec_quantizer *quantizer = &model.quantizer;
+    const struct encodec_decoder   *decoder   = &model.decoder;
+
+    struct ggml_tensor *quantized = encodec_forward_quantizer_decode(
+        quantizer, allocr, ctx0, inp_codes, hidden_dim, n_bins, sr, bandwidth, hop_length
+    );
+
+    struct ggml_tensor *decoded = encodec_forward_decoder(
+        decoder, allocr, ctx0, quantized, ratios, kernel_size, res_kernel_sz, stride
+    );
 
     switch (mode) {
         case encodec_run_mode_t::DECODE: {
