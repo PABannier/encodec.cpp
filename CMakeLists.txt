@@ -30,6 +30,7 @@ add_library(
     ops.cpp
     ops.h
     utils.h
+    lstm.h
 )
 
 if (ENCODEC_BUILD_EXAMPLES)
