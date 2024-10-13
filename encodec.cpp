@@ -187,12 +187,12 @@ struct encodec_context {
 
 typedef enum {
     // Run the end-to-end encoder-decoder pipeline
-    full = 0,
+    FULL = 0,
     // Encode an audio (encoder + quantizer encode)
-    encode = 1,
+    ENCODE = 1,
     // Decode an audio from a compressed representation (quantizer decode + decoder)
-    decode = 2,
-} encodec_run_mode;
+    DECODE = 2,
+} encodec_run_mode_t;
 
 static void ggml_log_callback_default(ggml_log_level level, const char *text, void *user_data) {
     (void)level;
@@ -1140,8 +1140,8 @@ struct ggml_cgraph *encodec_build_graph(
     struct encodec_context *ectx,
     const float * inp_audio,
     const int n_samples,
-    const encodec_run_mode mode) {
-    assert(mode == encodec_run_mode::full || mode == encodec_run_mode::encode);
+    const encodec_run_mode_t mode) {
+    assert(mode == encodec_run_mode_t::FULL || mode == encodec_run_mode_t::ENCODE);
 
     const auto &model = ectx->model;
     const auto &hparams = model.hparams;
@@ -1178,13 +1178,13 @@ struct ggml_cgraph *encodec_build_graph(
     struct ggml_tensor *decoded = encodec_forward_decoder(ectx, ctx0, quantized);
 
     switch (mode) {
-        case encodec_run_mode::full: {
+        case encodec_run_mode_t::FULL: {
             ggml_build_forward_expand(gf, decoded);
         } break;
-        case encodec_run_mode::encode: {
+        case encodec_run_mode_t::ENCODE: {
             ggml_build_forward_expand(gf, codes);
         } break;
-        case encodec_run_mode::decode: {
+        case encodec_run_mode_t::DECODE: {
             return NULL;
         } break;
         default: {
@@ -1206,8 +1206,8 @@ struct ggml_cgraph *encodec_build_graph(
     struct encodec_context *ectx,
     const int32_t * codes,
     const int n_codes,
-    const encodec_run_mode mode) {
-    assert(mode == encodec_run_mode::decode);
+    const encodec_run_mode_t mode) {
+    assert(mode == encodec_run_mode_t::DECODE);
 
     const auto &model = ectx->model;
     const auto &hparams = model.hparams;
@@ -1255,7 +1255,7 @@ struct ggml_cgraph *encodec_build_graph(
     struct ggml_tensor *decoded = encodec_forward_decoder(ectx, ctx0, quantized);
 
     switch (mode) {
-        case encodec_run_mode::decode: {
+        case encodec_run_mode_t::DECODE: {
             ggml_build_forward_expand(gf, decoded);
         } break;
         default: {
@@ -1277,7 +1277,7 @@ bool encodec_eval_internal(
     const float * raw_audio,
     const int n_samples,
     const int n_threads,
-    const encodec_run_mode mode) {
+    const encodec_run_mode_t mode) {
     auto &model = ectx->model;
     auto &allocr = ectx->allocr;
 
@@ -1308,7 +1308,7 @@ bool encodec_eval_internal(
     const int32_t * codes,
     const int n_codes,
     const int n_threads,
-    const encodec_run_mode mode) {
+    const encodec_run_mode_t mode) {
     auto &model = ectx->model;
     auto &allocr = ectx->allocr;
 
@@ -1339,7 +1339,7 @@ bool encodec_eval(
     const float *raw_audio,
     const int n_samples,
     const int n_threads,
-    const encodec_run_mode mode) {
+    const encodec_run_mode_t mode) {
     const int64_t t_start_us = ggml_time_us();
 
     // allocate the compute buffer
@@ -1378,7 +1378,7 @@ bool encodec_eval(
     const int32_t *codes,
     const int n_codes,
     const int n_threads,
-    const encodec_run_mode mode) {
+    const encodec_run_mode_t mode) {
     const int64_t t_start_ms = ggml_time_us();
 
     // allocate the compute buffer
@@ -1422,7 +1422,7 @@ bool encodec_reconstruct_audio(
         return false;
     }
 
-    if (!encodec_eval(ectx, raw_audio, n_samples, n_threads, encodec_run_mode::full)) {
+    if (!encodec_eval(ectx, raw_audio, n_samples, n_threads, encodec_run_mode_t::FULL)) {
         fprintf(stderr, "%s: failed to run encodec eval\n", __func__);
         return false;
     }
@@ -1449,7 +1449,7 @@ bool encodec_compress_audio(
     const float * raw_audio,
     const int n_samples,
     int n_threads) {
-    if (!encodec_eval(ectx, raw_audio, n_samples, n_threads, encodec_run_mode::encode)) {
+    if (!encodec_eval(ectx, raw_audio, n_samples, n_threads, encodec_run_mode_t::ENCODE)) {
         fprintf(stderr, "%s: failed to run encodec eval\n", __func__);
         return false;
     }
@@ -1476,7 +1476,7 @@ bool encodec_decompress_audio(
     const int32_t * codes,
     const int n_codes,
     int n_threads) {
-    if (!encodec_eval(ectx, codes, n_codes, n_threads, encodec_run_mode::decode)) {
+    if (!encodec_eval(ectx, codes, n_codes, n_threads, encodec_run_mode_t::DECODE)) {
         fprintf(stderr, "%s: failed to run encodec eval\n", __func__);
         return false;
     }
