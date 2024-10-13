@@ -147,11 +147,11 @@ struct vocos_context {
     struct ggml_allocr * allocr = NULL;
 
     // intermediate steps
-    struct ggml_tensor * encoded = NULL;
-    struct ggml_tensor * decoded  = NULL;
+    struct ggml_tensor * features_t  = NULL;
+    struct ggml_tensor * out_audio_t = NULL;
 
-    std::vector<float> features;
-    std::vector<float>   out_audio;
+    std::vector<float> features ;
+    std::vector<float> out_audio;
 
     // statistics
     struct vocos_statistics stats;
@@ -582,10 +582,14 @@ struct ggml_tensor *vocos_forward_decoder(
 
     // backbone
 
+    // [dim, seq_length]
     struct ggml_tensor *emb = ggml_conv_1d(
         ctx0, backbone.embed_w, encoded, 1 /* s0 */, 3 /* p0 */, 1 /* d0 */);
+    print_tensor(emb);
+    print_tensor(backbone.embed_b);
     emb = ggml_add(ctx0, emb, backbone.embed_b);
 
+    // [dim, seq_length]
     emb = vocos_ada_layer_norm(ctx0, emb, backbone.norm_scale, backbone.norm_shift, bandwidth_id);
 
     struct ggml_tensor *res = emb;
@@ -593,6 +597,7 @@ struct ggml_tensor *vocos_forward_decoder(
     for (int i = 0; i < n_layers; i++) {
         auto &layer = backbone.layers[i];
 
+        // [dim, seq_length]
         // TODO (PAB): depth wise (groups=dim)
         struct ggml_tensor *dwconv = ggml_conv_1d(
             ctx0, layer.dwconv_w, res, 1 /* s0 */, 3 /* p0 */, 1 /* d0 */);
@@ -600,18 +605,20 @@ struct ggml_tensor *vocos_forward_decoder(
 
         dwconv = vocos_ada_layer_norm(ctx0, dwconv, layer.norm_scale, layer.norm_shift, bandwidth_id);
 
-        struct ggml_tensor *pwconv1 = ggml_conv_1d(
-            ctx0, layer.pwconv1_w, dwconv, 1 /* s0 */, 0 /* p0 */, 1 /* d0 */);
+        // [intermediate_dim, seq_length]
+        struct ggml_tensor * pwconv1 = ggml_mul_mat(ctx0, layer.pwconv1_w, dwconv);
         pwconv1 = ggml_add(ctx0, pwconv1, layer.pwconv1_b);
 
         pwconv1 = ggml_gelu(ctx0, pwconv1);
 
-        struct ggml_tensor *pwconv2 = ggml_conv_1d(
-            ctx0, layer.pwconv2_w, pwconv1, 1 /* s0 */, 0 /* p0 */, 1 /* d0 */);
+        // [dim, seq_length]
+        struct ggml_tensor *pwconv2 = ggml_mul_mat(ctx0, layer.pwconv2_w, pwconv1);
         pwconv2 = ggml_add(ctx0, pwconv2, layer.pwconv2_b);
 
+        // [dim, seq_length]
         pwconv2 = ggml_mul(ctx0, pwconv2, layer.gamma);
 
+        // [dim, seq_length], residual connection
         res = ggml_add(ctx0, res, pwconv2);
     }
 
@@ -635,8 +642,8 @@ struct ggml_cgraph *vocos_build_graph(
     const auto & hparams = model.hparams;
     const auto & allocr  = vctx->allocr;
 
-    const int    n_q     = 8;     // TODO (PAB): hardcoded
-    const int n_bins     = 1024;  // TODO (PAB): hardcoded
+    const int    n_q     = 8;                       // TODO (PAB): hardcoded
+    const int n_bins     = 1024;                    // TODO (PAB): hardcoded
     const int seq_length = codes.size() / n_q;
 
     // since we are using ggml-alloc, this buffer only needs enough space to hold the
@@ -657,29 +664,35 @@ struct ggml_cgraph *vocos_build_graph(
     struct ggml_tensor *inp = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, seq_length, n_q);
     ggml_allocr_alloc(allocr, inp);
 
+    struct ggml_tensor *bandwidth_id = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, 1);
+    ggml_allocr_alloc(allocr, bandwidth_id);
+
     if (!ggml_allocr_is_measure(allocr)) {
         ggml_backend_tensor_set(inp, codes.data(), 0, codes.size() * sizeof(int32_t));
 
         // add offsets of shape [n_q] broadcasted to inp
         // inp + offsets
+        // TODO: can we ensure i / seq_length is floored?
         for (int i = 0; i < seq_length*n_q; i++) {
             int32_t v = (i / seq_length) * n_bins;
             ggml_backend_tensor_set(inp, &v, i * sizeof(int32_t), sizeof(int32_t));
         }
+
+        ggml_backend_tensor_set(bandwidth_id, &hparams.bandwidth_id, 0, sizeof(int32_t));
     }
 
-    struct ggml_tensor *encoded = vocos_forward_encoder(vctx, ctx0, inp);
-    // struct ggml_tensor *decoded = vocos_forward_decoder(vctx, ctx0, encoded);
+    struct ggml_tensor * encoded  = vocos_forward_encoder(vctx, ctx0, inp);
+    struct ggml_tensor * decoded  = vocos_forward_decoder(vctx, ctx0, encoded, bandwidth_id);
 
     switch (mode) {
         case vocos_run_mode::full: {
-            // ggml_build_forward_expand(gf, decoded);
+            ggml_build_forward_expand(gf, decoded);
         } break;
         case vocos_run_mode::encode: {
             ggml_build_forward_expand(gf, encoded);
         } break;
         case vocos_run_mode::decode: {
-            return NULL;
+            ggml_build_forward_expand(gf, decoded);
         } break;
         default: {
             fprintf(stderr, "%s: unknown run mode\n", __func__);
@@ -689,8 +702,8 @@ struct ggml_cgraph *vocos_build_graph(
 
     ggml_free(ctx0);
 
-    vctx->encoded = encoded;
-    // vctx->decoded = decoded;
+    vctx->features_t  = encoded;
+    vctx->out_audio_t = decoded;
 
     return gf;
 }
@@ -784,18 +797,10 @@ bool vocos_eval(
         return false;
     }
 
-    auto &features = vctx->features;
+    int32_t n_features = ggml_nelements(vctx->features_t);
 
-    int out_length = ggml_nelements(vctx->encoded);
-    features.resize(out_length);
-
-    ggml_backend_tensor_get(vctx->encoded, features.data(), 0, out_length * ggml_type_size(vctx->encoded->type));
-
-    float sum = 0.0f;
-    for (int i = 0; i < out_length; i++) {
-        sum += features[i];
-    }
-    printf("%s: sum = %f\n", __func__, sum);
+    vctx->features.resize(n_features);
+    ggml_backend_tensor_get(vctx->features_t, vctx->features.data(), 0, n_features * sizeof(float));
 
     vctx->stats.t_compute_us = ggml_time_us() - t_start_us;
 
@@ -806,7 +811,7 @@ bool vocos_reconstruct_audio(
             struct vocos_context *vctx,
             const std::vector<float> raw_audio,
             int n_threads) {
-    if (!vocos_eval(vctx, raw_audio, n_threads, vocos_run_mode::encode)) {
+    if (!vocos_eval(vctx, raw_audio, n_threads, vocos_run_mode::full)) {
         std::cerr << "Failed to evaluate model" << std::endl;
         return false;
     }
