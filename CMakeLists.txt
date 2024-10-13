@@ -27,6 +27,9 @@ add_library(
     ${ENCODEC_LIB} STATIC
     encodec.cpp
     encodec.h
+    encoder.h
+    decoder.h
+    quantizer.h
     ops.cpp
     ops.h
     utils.h
