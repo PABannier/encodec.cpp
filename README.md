@@ -20,15 +20,14 @@ https://github.com/PABannier/encodec.cpp/assets/12958149/d11561be-98e9-4504-bba7
 - [x] Support of 24Khz model
 - [x] Mixed F16 / F32 precision
 - [ ] 4-bit and 8-bit quantization
-- [x] Metal support
-- [x] cuBLAS support
+- [ ] Metal support
+- [ ] CoreML support
 
 ## Implementation details
 
 - The core tensor operations are implemented in C ([ggml.h](ggml.h) / [ggml.c](ggml.c))
 - The encoder-decoder architecture and the high-level C-style API are implemented in C++ ([encodec.h](encodec.h) / [encodec.cpp](encodec.cpp))
 - Basic usage is demonstrated in [main.cpp](examples/main).
-
 
 ## Usage
 
