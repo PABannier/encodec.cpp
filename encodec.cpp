@@ -145,17 +145,17 @@ bool encodec_load_model_weights(std::ifstream &infile, encodec_model &model, int
 
         const int32_t qntvr = hparams.ftype / GGML_QNT_VERSION_FACTOR;
 
-        printf("%s: in_channels = %d\n", __func__, hparams.in_channels);
-        printf("%s: hidden_dim  = %d\n", __func__, hparams.hidden_dim);
-        printf("%s: n_filters   = %d\n", __func__, hparams.n_filters);
-        printf("%s: kernel_size = %d\n", __func__, hparams.kernel_size);
-        printf("%s: res_kernel  = %d\n", __func__, hparams.residual_kernel_size);
-        // printf("%s: ratios      = %d\n", __func__, hparams.ratios);
-        printf("%s: n_bins      = %d\n", __func__, hparams.n_bins);
-        printf("%s: bandwidth   = %d\n", __func__, hparams.bandwidth);
-        printf("%s: sample_rate = %d\n", __func__, hparams.sr);
-        printf("%s: ftype       = %d\n", __func__, hparams.ftype);
-        printf("%s: qntvr       = %d\n", __func__, qntvr);
+        // printf("%s: in_channels = %d\n", __func__, hparams.in_channels);
+        // printf("%s: hidden_dim  = %d\n", __func__, hparams.hidden_dim);
+        // printf("%s: n_filters   = %d\n", __func__, hparams.n_filters);
+        // printf("%s: kernel_size = %d\n", __func__, hparams.kernel_size);
+        // printf("%s: res_kernel  = %d\n", __func__, hparams.residual_kernel_size);
+        // // printf("%s: ratios      = %d\n", __func__, hparams.ratios);
+        // printf("%s: n_bins      = %d\n", __func__, hparams.n_bins);
+        // printf("%s: bandwidth   = %d\n", __func__, hparams.bandwidth);
+        // printf("%s: sample_rate = %d\n", __func__, hparams.sr);
+        // printf("%s: ftype       = %d\n", __func__, hparams.ftype);
+        // printf("%s: qntvr       = %d\n", __func__, qntvr);
 
         hparams.ftype %= GGML_QNT_VERSION_FACTOR;
     }
@@ -237,8 +237,8 @@ bool encodec_load_model_weights(std::ifstream &infile, encodec_model &model, int
         n_tensors = ((4 * 2) * 4 + 2 + 4 * n_lstm_layers + 2) * 2;  // encoder and decoder
         n_tensors += n_q * 1;                                       // quantizer
 
-        printf("%s: ggml tensor size    = %d bytes\n", __func__, (int)sizeof(ggml_tensor));
-        printf("%s: backend buffer size = %6.2f MB\n", __func__, buffer_size / (1024.0 * 1024.0));
+        // printf("%s: ggml tensor size    = %d bytes\n", __func__, (int)sizeof(ggml_tensor));
+        // printf("%s: backend buffer size = %6.2f MB\n", __func__, buffer_size / (1024.0 * 1024.0));
     }
 
     // create the ggml context
@@ -965,15 +965,15 @@ struct encodec_context *encodec_load_model(const char* model_path, const int off
     int sr = ectx->model.hparams.sr;
 
     int hop_length = 1;
+
     for (int i = 0; i < 4; i++) {
         hop_length *= ectx->model.hparams.ratios[i];
     }
+
     ectx->model.hparams.hop_length = hop_length;
+    ectx->model.hparams.n_q        = get_num_codebooks(bandwidth, hop_length, sr);
 
-    ectx->model.hparams.n_q = get_num_codebooks(bandwidth, hop_length, sr);
-    fprintf(stderr, "%s: n_q = %d\n", __func__, ectx->model.hparams.n_q);
-
-    ectx->stats.t_load_us = ggml_time_us() - t_start_load_us;
+    ectx->stats.t_load_us          = ggml_time_us() - t_start_load_us;
 
     return ectx;
 }
