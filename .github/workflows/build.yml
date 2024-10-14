@@ -65,29 +65,30 @@ jobs:
           cmake ..
           cmake --build . --config Release
 
-  macOS-latest-metal:
-    runs-on: macos-latest
+  windows-msys2:
+    runs-on: windows-latest
+
+    strategy:
+      fail-fast: false
 
     steps:
       - name: Clone
-        id: checkout
         uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
 
-      - name: Dependencies
-        id: depends
-        continue-on-error: true
+      - name: Setup UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          msystem: UCRT64
+          install: >-
+            base-devel
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+
+      - name: Build using CMake
+        shell: msys2 {0}
         run: |
-          brew update
-
-      - name: Create build environment
-        run: mkdir build
-
-      - name: Configure CMake
-        working-directory: ./build
-        run: cmake -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DGGML_METAL=ON ..
-
-      - name: Build
-        working-directory: ./build
-        run: cmake --build . --config Release
+          cmake -B build
+          cmake --build build --config Release -j $(nproc)
