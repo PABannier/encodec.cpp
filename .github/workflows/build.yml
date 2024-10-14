@@ -65,29 +65,34 @@ jobs:
           cmake ..
           cmake --build . --config Release
 
-  macOS-latest-metal:
-    runs-on: macos-latest
+  windows-msys2:
+    runs-on: windows-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { sys: UCRT64, env: ucrt-x86_64, build: Release }
+          - { sys: CLANG64, env: clang-x86_64, build: Release }
 
     steps:
       - name: Clone
-        id: checkout
         uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
 
-      - name: Dependencies
-        id: depends
-        continue-on-error: true
+      - name: Setup ${{ matrix.sys }}
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          msystem: ${{matrix.sys}}
+          install: >-
+            base-devel
+            mingw-w64-${{matrix.env}}-toolchain
+            mingw-w64-${{matrix.env}}-cmake
+
+      - name: Build using CMake
+        shell: msys2 {0}
         run: |
-          brew update
-
-      - name: Create build environment
-        run: mkdir build
-
-      - name: Configure CMake
-        working-directory: ./build
-        run: cmake -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DGGML_METAL=ON ..
-
-      - name: Build
-        working-directory: ./build
-        run: cmake --build . --config Release
+          cmake -B build
+          cmake --build build --config ${{ matrix.build }} -j $(nproc)
