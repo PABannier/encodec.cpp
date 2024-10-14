@@ -18,7 +18,7 @@ struct encodec_quantizer {
 };
 
 struct ggml_tensor *encodec_forward_quantizer_encode(
-    const struct encodec_quantizer *quantizer, struct ggml_allocr *allocr, struct ggml_context *ctx0,
+    const struct encodec_quantizer *quantizer, struct ggml_context *ctx0,
     struct ggml_tensor *encoded_inp, const int n_bins, const int sr, const int bandwidth,
     const int hop_length) {
 
@@ -33,15 +33,7 @@ struct ggml_tensor *encodec_forward_quantizer_encode(
     const int seq_length = encoded_inp->ne[0];
 
     struct ggml_tensor *codes = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, seq_length, n_q);
-    ggml_allocr_alloc(allocr, codes);
-
-    struct ggml_tensor *dist_scale = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, 1);
-    ggml_allocr_alloc(allocr, dist_scale);
-
-    if (!ggml_allocr_is_measure(allocr)) {
-        float s = -2.0f;
-        ggml_backend_tensor_set(dist_scale, &s, 0, sizeof(s));
-    }
+    ggml_set_input(codes);
 
     struct ggml_tensor *inpL = ggml_cont(ctx0, ggml_transpose(ctx0, encoded_inp));
     struct ggml_tensor *residual = inpL;
@@ -53,7 +45,7 @@ struct ggml_tensor *encodec_forward_quantizer_encode(
         // compute distance
         // [seq_length, n_bins]
         struct ggml_tensor *dp = ggml_scale(
-            ctx0, ggml_mul_mat(ctx0, block.embed, residual), dist_scale);
+            ctx0, ggml_mul_mat(ctx0, block.embed, residual), -2.0f);
 
         // [n_bins]
         struct ggml_tensor *sqr_embed = ggml_sqr(ctx0, block.embed);
@@ -84,7 +76,7 @@ struct ggml_tensor *encodec_forward_quantizer_encode(
 }
 
 struct ggml_tensor *encodec_forward_quantizer_decode(
-    const struct encodec_quantizer *quantizer, struct ggml_allocr *allocr, struct ggml_context *ctx0,
+    const struct encodec_quantizer *quantizer, struct ggml_context *ctx0,
     struct ggml_tensor *codes, const int hidden_dim, const int n_bins, const int sr, const int bandwidth,
     const int hop_length) {
 
@@ -101,11 +93,8 @@ struct ggml_tensor *encodec_forward_quantizer_decode(
     assert(n_q == codes->ne[1]);
 
     struct ggml_tensor *quantized_out = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
-    ggml_allocr_alloc(allocr, quantized_out);
-
-    if (!ggml_allocr_is_measure(allocr)) {
-        quantized_out = ggml_set_zero(quantized_out);
-    }
+    ggml_set_input(quantized_out);
+    ggml_set_name(quantized_out, "quantized_out");
 
     for (int i = 0; i < n_q; i++) {
         encodec_quant_block block = quantizer->blocks[i];

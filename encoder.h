@@ -37,7 +37,7 @@ struct encodec_encoder {
 };
 
 struct ggml_tensor *encodec_forward_encoder(
-    const struct encodec_encoder *encoder, struct ggml_allocr *allocr, struct ggml_context *ctx0,
+    const struct encodec_encoder *encoder, struct ggml_context *ctx0,
     struct ggml_tensor *inp, const int * ratios, const int kernel_size, const int res_kernel_size,
     const int stride) {
 
@@ -87,14 +87,14 @@ struct ggml_tensor *encodec_forward_encoder(
         const encodec_lstm lstm = encoder->lstm;
 
         // first lstm layer
+        char l0_prefix[7] = "enc_l0";
         struct ggml_tensor *hs1 = forward_pass_lstm_unilayer(
-            ctx0, allocr, cur, lstm.l0_ih_w, lstm.l0_hh_w,
-            lstm.l0_ih_b, lstm.l0_hh_b);
+            ctx0, cur, lstm.l0_ih_w, lstm.l0_hh_w, lstm.l0_ih_b, lstm.l0_hh_b, l0_prefix);
 
         // second lstm layer
+        char l1_prefix[7] = "enc_l1";
         struct ggml_tensor *out = forward_pass_lstm_unilayer(
-            ctx0, allocr, hs1, lstm.l1_ih_w, lstm.l1_hh_w,
-            lstm.l1_ih_b, lstm.l1_hh_b);
+            ctx0, hs1, lstm.l1_ih_w, lstm.l1_hh_w, lstm.l1_ih_b, lstm.l1_hh_b, l1_prefix);
 
         inpL = ggml_add(ctx0, inpL, out);
     }
