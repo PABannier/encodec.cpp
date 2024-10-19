@@ -8,6 +8,7 @@ endif()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
+set(CMAKE_CXX_FLAGS_DEBUG "-g -O0")
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set(ENCODEC_STANDALONE ON)
@@ -27,12 +28,16 @@ add_library(
     ${ENCODEC_LIB} STATIC
     encodec.cpp
     encodec.h
+    encoder.cpp
     encoder.h
+    decoder.cpp
     decoder.h
     quantizer.h
     ops.cpp
     ops.h
+    utils.cpp
     utils.h
+    lstm.cpp
     lstm.h
 )
 
@@ -43,6 +48,10 @@ endif()
 target_link_libraries(${ENCODEC_LIB} PUBLIC ggml)
 target_include_directories(${ENCODEC_LIB} PUBLIC .)
 target_compile_features(${ENCODEC_LIB} PUBLIC cxx_std_11)
+
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_options(${ENCODEC_LIB} PRIVATE -g -O0)
+endif()
 
 if (GGML_CUBLAS)
     add_compile_definitions(GGML_USE_CUBLAS)
