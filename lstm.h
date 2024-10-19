@@ -49,7 +49,7 @@ struct ggml_tensor *forward_pass_lstm_unilayer(struct ggml_context *ctx0,
 
     struct ggml_tensor *current = ggml_cont(ctx0, ggml_transpose(ctx0, inp));
 
-    for (int t = 0; t < 2; t++) {
+    for (int t = 0; t < seq_length; t++) {
         struct ggml_tensor *x_t = ggml_view_1d(ctx0, current, input_dim, t * current->nb[1]);
 
         struct ggml_tensor *inp_gates = ggml_mul_mat(ctx0, weight_ih, x_t);
