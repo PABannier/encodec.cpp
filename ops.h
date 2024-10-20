@@ -2,8 +2,6 @@
 
 #include "ggml.h"
 
-struct ggml_tensor *encodec_sigmoid(struct ggml_context *ctx, struct ggml_tensor *x);
-
 struct ggml_tensor *pad_1d(struct ggml_context *ctx0, struct ggml_tensor *inp,
                            int padding_left, int padding_right);
 

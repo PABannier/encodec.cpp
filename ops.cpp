@@ -7,36 +7,12 @@
 
 #include "ops.h"
 
-static void encodec_sigmoid_impl(struct ggml_tensor *dst, const struct ggml_tensor *src,
-                                 int ith, int nth, void *userdata) {
-    GGML_ASSERT(userdata == NULL);
-    GGML_ASSERT(ggml_are_same_shape(dst, src));
-    GGML_ASSERT(ggml_is_contiguous(dst));
-    GGML_ASSERT(ggml_is_contiguous(src));
-
-    const float *src_data = ggml_get_data_f32(src);
-    float *dst_data = ggml_get_data_f32(dst);
-
-    const int ne = (int)ggml_nelements(dst);
-    const int dr = (ne + nth - 1) / nth;
-    const int ie0 = dr * ith;
-    const int ie1 = std::min(ie0 + dr, ne);
-
-    for (int i = ie0; i < ie1; ++i) {
-        dst_data[i] = 1.0f / (1.0f + expf(-src_data[i]));
-    }
-}
-
 static int get_extra_padding_for_conv_1d(struct ggml_tensor *inp, float kernel_size,
                                          float stride, float padding_total) {
     float length = inp->ne[0];
     float n_frames = (length - kernel_size + padding_total) / stride + 1.0f;
     int ideal_length = (ceilf(n_frames) - 1) * stride + (kernel_size - padding_total);
     return ideal_length - length;
-}
-
-struct ggml_tensor *encodec_sigmoid(struct ggml_context *ctx, struct ggml_tensor *x) {
-    return ggml_map_custom1(ctx, x, encodec_sigmoid_impl, GGML_N_TASKS_MAX, NULL);
 }
 
 struct ggml_tensor *pad_1d(struct ggml_context *ctx0, struct ggml_tensor *inp,
@@ -52,11 +28,10 @@ struct ggml_tensor *pad_1d(struct ggml_context *ctx0, struct ggml_tensor *inp,
 
         // constant padding
         struct ggml_tensor *out = ggml_new_tensor_2d(ctx0, inp->type, length + extra_pad, dim);
-        ggml_set_zero(out);
         out = ggml_set_2d(ctx0, out, inp, out->nb[1], 0);
     }
 
-    struct ggml_tensor *padded = ggml_pad_reflec_1d(ctx0, inp, padding_left, padding_right);
+    struct ggml_tensor *padded = ggml_pad_reflect_1d(ctx0, inp, padding_left, padding_right);
 
     const int end = padded->ne[0] - extra_pad;
     struct ggml_tensor *dest = ggml_view_2d(ctx0, padded, end, dim, padded->nb[1], 0);

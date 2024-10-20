@@ -20,29 +20,32 @@ struct encodec_lstm {
 };
 
 struct ggml_tensor *forward_pass_lstm_unilayer(struct ggml_context *ctx0,
-                                               struct ggml_allocr *allocr,
-                                               struct ggml_tensor *inp,
-                                               struct ggml_tensor *weight_ih,
-                                               struct ggml_tensor *weight_hh,
-                                               struct ggml_tensor *bias_ih,
-                                               struct ggml_tensor *bias_hh) {
-    const int input_dim = inp->ne[1];
-    const int hidden_dim = weight_ih->ne[1] / 4;
+                                               struct ggml_tensor  *inp,
+                                               struct ggml_tensor  *weight_ih,
+                                               struct ggml_tensor  *weight_hh,
+                                               struct ggml_tensor  *bias_ih,
+                                               struct ggml_tensor  *bias_hh,
+                                               char                *prefix) {
     const int seq_length = inp->ne[0];
+    const int input_dim  = inp->ne[1];
+    const int hidden_dim = weight_ih->ne[1] / 4;
+
+    char ct_name[10];
+    char ht_name[10];
+
+    snprintf(ct_name, 10, "%s_ct", prefix);
+    snprintf(ht_name, 10, "%s_ht", prefix);
 
     struct ggml_tensor *hs = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_dim, seq_length);
-    ggml_allocr_alloc(allocr, hs);
+    ggml_set_input(hs);
 
     struct ggml_tensor *c_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim);
-    ggml_allocr_alloc(allocr, c_t);
+    ggml_set_input(c_t);
+    ggml_set_name(c_t, ct_name);
 
     struct ggml_tensor *h_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_dim);
-    ggml_allocr_alloc(allocr, h_t);
-
-    if (!ggml_allocr_is_measure(allocr)) {
-        h_t = ggml_set_zero(h_t);
-        c_t = ggml_set_zero(c_t);
-    }
+    ggml_set_input(h_t);
+    ggml_set_name(h_t, ht_name);
 
     struct ggml_tensor *current = ggml_cont(ctx0, ggml_transpose(ctx0, inp));
 
@@ -57,10 +60,10 @@ struct ggml_tensor *forward_pass_lstm_unilayer(struct ggml_context *ctx0,
 
         struct ggml_tensor *out_gates = ggml_add(ctx0, inp_gates, hid_gates);
 
-        struct ggml_tensor *i_t = encodec_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 0 * sizeof(float) * hidden_dim));
-        struct ggml_tensor *f_t = encodec_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 1 * sizeof(float) * hidden_dim));
-        struct ggml_tensor *g_t = ggml_tanh(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 2 * sizeof(float) * hidden_dim));
-        struct ggml_tensor *o_t = encodec_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 3 * sizeof(float) * hidden_dim));
+        struct ggml_tensor *i_t = ggml_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 0 * sizeof(float) * hidden_dim));
+        struct ggml_tensor *f_t = ggml_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 1 * sizeof(float) * hidden_dim));
+        struct ggml_tensor *g_t = ggml_tanh(ctx0   , ggml_view_1d(ctx0, out_gates, hidden_dim, 2 * sizeof(float) * hidden_dim));
+        struct ggml_tensor *o_t = ggml_sigmoid(ctx0, ggml_view_1d(ctx0, out_gates, hidden_dim, 3 * sizeof(float) * hidden_dim));
 
         c_t = ggml_add(ctx0, ggml_mul(ctx0, f_t, c_t), ggml_mul(ctx0, i_t, g_t));
 

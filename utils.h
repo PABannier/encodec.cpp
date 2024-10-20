@@ -28,10 +28,3 @@ int32_t get_num_quantizers_for_bandwidth(int bins, float frame_rate, float bandw
     int32_t n_q = MAX(1, floorf(bandwidth * 1000 / bw_per_q));
     return n_q;
 }
-
-void ggml_log_callback_default(ggml_log_level level, const char *text, void *user_data) {
-    (void)level;
-    (void)user_data;
-    fputs(text, stderr);
-    fflush(stderr);
-}

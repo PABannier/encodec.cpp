@@ -1,6 +1,7 @@
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 #include "ggml.h"
+#include "ggml/src/ggml-impl.h"
 
 #ifdef GGML_USE_CUBLAS
 #include "ggml-cuda.h"
@@ -32,6 +33,7 @@
 #include "quantizer.h"
 
 #define ENCODEC_FILE_MAGIC 'ggml'
+#define ENCODEC_MAX_NODES 80000
 
 typedef enum {
     // Run the end-to-end encoder-decoder pipeline
@@ -96,14 +98,33 @@ struct encodec_model {
     std::map<std::string, struct ggml_tensor *> tensors;
 };
 
+struct encodec_ggml_cgraph_deleter {
+    void operator()(struct ggml_cgraph * cgraph) {
+        if (cgraph->nodes)
+            free(cgraph->nodes);
+        if (cgraph->leafs)
+            free(cgraph->leafs);
+        if (cgraph->visited_hash_set.keys)
+            free(cgraph->visited_hash_set.keys);
+        if (cgraph->grads)
+            free(cgraph->grads);
+        free(cgraph);
+    }
+};
+
 struct encodec_context {
     encodec_model model;
+
+    // computational graph stored on the heap to avoid stack overflows
+    // the computational graph grows with the sequence length (because of the LSTM)
+    // which requires a lot of nodes
+    std::unique_ptr<struct ggml_cgraph, encodec_ggml_cgraph_deleter> gf;
 
     // buffer for model evaluation
     ggml_backend_buffer_t buf_compute;
 
-    // custom allocrator
-    struct ggml_allocr *allocr = NULL;
+    // tensor graph allocator
+    ggml_gallocr_t allocr = NULL;
 
     // intermediate steps
     struct ggml_tensor *encoded = NULL;  // Encoded audio
@@ -171,78 +192,10 @@ bool encodec_load_model_weights(std::ifstream &infile, encodec_model &model, int
 
     auto &ctx = model.ctx;
 
-    size_t buffer_size = 0;
-    size_t n_tensors = 0;
-
-    // Evaluating context size
-    {
-        const auto &hparams = model.hparams;
-
-        const int in_channels = hparams.in_channels;
-        const int hidden_dim = hparams.hidden_dim;
-        const int n_filters = hparams.n_filters;
-        const int kernel_size = hparams.kernel_size;
-        const int res_kernel_sz = hparams.residual_kernel_size;
-        const int n_bins = hparams.n_bins;
-        const int *ratios = hparams.ratios;
-        const int n_lstm_layers = hparams.n_lstm_layers;
-
-        // encoder
-        {
-            int mult = 1;  // scaling factor for hidden size
-
-            // initial conv1d layer
-            buffer_size += in_channels * n_filters * kernel_size * ggml_type_size(wtype);  // weight
-            buffer_size += n_filters * ggml_type_size(GGML_TYPE_F32);                      // bias
-
-            // resnet blocks
-            for (int i = 0; i < 4; i++) {
-                // conv1
-                buffer_size += res_kernel_sz * (mult * n_filters) * (mult * n_filters / 2) * ggml_type_size(wtype);  // weight
-                buffer_size += (mult * n_filters / 2) * ggml_type_size(GGML_TYPE_F32);                               // bias
-
-                // conv2
-                buffer_size += (mult * n_filters / 2) * (mult * n_filters) * ggml_type_size(wtype);  // weight
-                buffer_size += (mult * n_filters) * ggml_type_size(GGML_TYPE_F32);                   // bias
-
-                // shortcut
-                buffer_size += (mult * n_filters) * (mult * n_filters) * ggml_type_size(wtype);  // weight
-                buffer_size += (mult * n_filters) * ggml_type_size(GGML_TYPE_F32);               // bias
-
-                // downsampling layers
-                buffer_size += (2 * ratios[3 - i]) * (mult * n_filters) * (mult * n_filters * 2) * ggml_type_size(wtype);  // weight
-                buffer_size += (2 * mult * n_filters) * ggml_type_size(GGML_TYPE_F32);                                     // bias
-
-                mult *= 2;
-            }
-
-            // lstm
-            buffer_size += 2 * n_lstm_layers * (mult * n_filters) * (4 * mult * n_filters) * ggml_type_size(wtype);  // weight_ih and weight_hh
-            buffer_size += 2 * n_lstm_layers * (4 * mult * n_filters) * ggml_type_size(GGML_TYPE_F32);               // bias_ih and bias_hh
-
-            // final conv
-            buffer_size += kernel_size * (mult * n_filters) * hidden_dim * ggml_type_size(wtype);  // weight
-            buffer_size += hidden_dim * ggml_type_size(GGML_TYPE_F32);                             // bias
-        }
-
-        // decoder mirrors the encoder (same number of parameters), just double context size
-        buffer_size *= 2;
-
-        // quantizer
-        int n_q = 32;                                                              // 32 is an upper bound on the number of codebooks.
-        buffer_size += n_q * hidden_dim * n_bins * ggml_type_size(GGML_TYPE_F32);  // embed
-
-        buffer_size += 10ull * MB;  // object overhead
-
-        n_tensors = ((4 * 2) * 4 + 2 + 4 * n_lstm_layers + 2) * 2;  // encoder and decoder
-        n_tensors += n_q * 1;                                       // quantizer
-
-        // printf("%s: ggml tensor size    = %d bytes\n", __func__, (int)sizeof(ggml_tensor));
-        // printf("%s: backend buffer size = %6.2f MB\n", __func__, buffer_size / (1024.0 * 1024.0));
-    }
-
     // create the ggml context
     {
+        size_t n_tensors = ((4 * 2) * 4 + 2 + 4 * model.hparams.n_lstm_layers + 2) * 2;  // encoder and decoder
+        n_tensors += model.hparams.n_q * 1;                                              // quantizer
         struct ggml_init_params params = {
             /* .mem_size   = */ ggml_tensor_overhead() * n_tensors,
             /* .mem_buffer = */ NULL,
@@ -269,7 +222,6 @@ bool encodec_load_model_weights(std::ifstream &infile, encodec_model &model, int
 #ifdef GGML_USE_METAL
     if (n_gpu_layers > 0) {
         fprintf(stderr, "%s: using Metal backend\n", __func__);
-        ggml_metal_log_set_callback(ggml_log_callback_default, nullptr);
         model.backend = ggml_backend_metal_init();
         if (!model.backend) {
             fprintf(stderr, "%s: ggml_backend_metal_init() failed\n", __func__);
@@ -288,21 +240,18 @@ bool encodec_load_model_weights(std::ifstream &infile, encodec_model &model, int
         return false;
     }
 
-    // allocate weights buffer
-    model.buffer_w = ggml_backend_alloc_buffer(model.backend, buffer_size);
-
-    // prepare memory for the weights
+    // create the tensors for the model
     {
-        const auto &hparams = model.hparams;
+        const auto & hparams = model.hparams;
 
-        const int in_channels = hparams.in_channels;
-        const int hidden_dim = hparams.hidden_dim;
-        const int n_filters = hparams.n_filters;
-        const int kernel_size = hparams.kernel_size;
+        const int in_channels   = hparams.in_channels;
+        const int hidden_dim    = hparams.hidden_dim;
+        const int n_filters     = hparams.n_filters;
+        const int kernel_size   = hparams.kernel_size;
         const int res_kernel_sz = hparams.residual_kernel_size;
-        const int n_q = hparams.n_q;
-        const int *ratios = hparams.ratios;
-        const int n_bins = hparams.n_bins;
+        const int n_q           = hparams.n_q;
+        const int *ratios       = hparams.ratios;
+        const int n_bins        = hparams.n_bins;
 
         // encoder
         {
@@ -469,10 +418,11 @@ bool encodec_load_model_weights(std::ifstream &infile, encodec_model &model, int
         }
     }
 
+    // allocate the model tensors in a backend buffer
+    model.buffer_w = ggml_backend_alloc_ctx_tensors(ctx, model.backend);
+
     // load weights
     {
-        ggml_allocr *alloc = ggml_allocr_new_from_buffer(model.buffer_w);
-
         size_t total_size = 0;
         model.n_loaded = 0;
 
@@ -529,14 +479,8 @@ bool encodec_load_model_weights(std::ifstream &infile, encodec_model &model, int
                 return false;
             }
 
-            ggml_allocr_alloc(alloc, tensor);
-
-            if (ggml_backend_is_cpu(model.backend)
-#ifdef GGML_USE_METAL
-                || ggml_backend_is_metal(model.backend)
-#endif
-            ) {
-                // for the CPU and Metal backends, we can read directly into the device memory
+            if (ggml_backend_buffer_is_host(model.buffer_w)) {
+                // for some backends such as CPU and Metal, the tensor data is in system memory and we can read directly into it
                 infile.read(reinterpret_cast<char *>(tensor->data), ggml_nbytes(tensor));
             } else {
                 // read into a temporary buffer first, then copy to device memory
@@ -549,8 +493,7 @@ bool encodec_load_model_weights(std::ifstream &infile, encodec_model &model, int
             model.n_loaded++;
         }
 
-        ggml_allocr_free(alloc);
-        printf("%s: model size = %8.2f MB\n", __func__, total_size / 1024.0 / 1024.0);
+        printf("%s: model size = %.2f MB\n", __func__, total_size / 1024.0 / 1024.0);
     }
 
     infile.close();
@@ -558,15 +501,59 @@ bool encodec_load_model_weights(std::ifstream &infile, encodec_model &model, int
     return true;
 }
 
-struct ggml_cgraph *encodec_build_graph(struct encodec_context *ectx,
-                                        const float * inp_audio,
-                                        const int n_samples,
-                                        const encodec_run_mode_t mode) {
+// Create a new ggml_cgraph with the given size (usually ENCODEC_MAX_NODES). We need a
+// custom function since the graph is so large, it overpasses the max built-in ggml
+// default size.
+static struct ggml_cgraph * encodec_ggml_cgraph_create(size_t size) {
+    struct ggml_cgraph * cgraph = (struct ggml_cgraph *)calloc(1, sizeof(struct ggml_cgraph));
+    cgraph->size = size;
+    cgraph->n_nodes = 0;
+    cgraph->n_leafs = 0;
+    cgraph->nodes = (struct ggml_tensor **)calloc(1, size * sizeof(struct ggml_tensor *));
+    cgraph->leafs = (struct ggml_tensor **)calloc(1, size * sizeof(struct ggml_tensor *));
+
+    // next primes after powers of two
+    static const size_t primes[] = {
+        2, 3, 5, 11, 17, 37, 67, 131, 257, 521, 1031,
+        2053, 4099, 8209, 16411, 32771, 65537, 131101,
+        262147, 524309, 1048583, 2097169, 4194319, 8388617,
+        16777259, 33554467, 67108879, 134217757, 268435459,
+        536870923, 1073741827, 2147483659
+    };
+    static const size_t n_primes = sizeof(primes)/sizeof(primes[0]);
+
+    // find the smallest prime that is larger or equal to size
+    size_t l = 0;
+    size_t r = n_primes;
+    while (l < r) {
+        size_t m = (l + r)/2;
+        if (primes[m] < size * 2) {
+            l = m + 1;
+        } else {
+            r = m;
+        }
+    }
+    size_t hash_size = l < n_primes ? primes[l] : (size * 2 + 1);
+
+    cgraph->visited_hash_set.size = hash_size;
+    cgraph->visited_hash_set.keys = (struct ggml_tensor **)calloc(1, hash_size * sizeof(struct ggml_tensor *));
+    cgraph->visited_hash_set.used = (ggml_bitset_t *)calloc(1, ggml_bitset_size(hash_size) * sizeof(ggml_bitset_t));
+    cgraph->order = GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT;
+
+    return cgraph;
+}
+
+void encodec_build_graph(struct encodec_context *ectx,
+                         const float * inp_audio,
+                         const int n_samples,
+                         const encodec_run_mode_t mode) {
     assert(mode == encodec_run_mode_t::FULL || mode == encodec_run_mode_t::ENCODE);
 
     const auto & model   = ectx->model;
     const auto & hparams = model.hparams;
     const auto & allocr  = ectx->allocr;
+
+    auto & gf = ectx->gf;
 
     const int *ratios       = hparams.ratios;
     const int kernel_size   = hparams.kernel_size;
@@ -581,60 +568,55 @@ struct ggml_cgraph *encodec_build_graph(struct encodec_context *ectx,
 
     // since we are using ggml-alloc, this buffer only needs enough space to hold the
     // ggml_tensor and ggml_cgraph structs, but not the tensor data
-    static size_t buf_size = ggml_tensor_overhead() * GGML_MAX_NODES + ggml_graph_overhead();
+    static size_t buf_size = ggml_tensor_overhead() * ENCODEC_MAX_NODES + ggml_graph_overhead();
     static std::vector<uint8_t> buf(buf_size);
 
     struct ggml_init_params ggml_params = {
-        /*.mem_size   =*/buf_size,
-        /*.mem_buffer =*/buf.data(),
-        /*.no_alloc   =*/true,  // skip allocating as we use ggml_alloc to allocate exact memory requirements
+        /*.mem_size   =*/ buf_size,
+        /*.mem_buffer =*/ buf.data(),
+        /*.no_alloc   =*/ true,  // the tensors will be allocated later by ggml_gallocr_alloc_graph()
     };
 
     struct ggml_context *ctx0 = ggml_init(ggml_params);
 
-    struct ggml_cgraph *gf = ggml_new_graph(ctx0);
+    gf = std::unique_ptr<struct ggml_cgraph, encodec_ggml_cgraph_deleter>(encodec_ggml_cgraph_create(ENCODEC_MAX_NODES));
 
     struct ggml_tensor *inp = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, n_samples);
-    ggml_allocr_alloc(allocr, inp);
+    ggml_set_name(inp, "inp");
+    ggml_set_input(inp);
 
-    // avoid writing to tensors if we are only measuring the memory usage
-    if (!ggml_allocr_is_measure(allocr)) {
-        ggml_backend_tensor_set(inp, inp_audio, 0, n_samples * ggml_element_size(inp));
-    }
-
-    const struct encodec_encoder *encoder     = &model.encoder;
-    const struct encodec_quantizer *quantizer = &model.quantizer;
-    const struct encodec_decoder *decoder     = &model.decoder;
+    const struct encodec_encoder   * encoder   = &model.encoder;
+    const struct encodec_quantizer * quantizer = &model.quantizer;
+    const struct encodec_decoder   * decoder   = &model.decoder;
 
     struct ggml_tensor * encoded = encodec_forward_encoder(
-        encoder, allocr, ctx0, inp, ratios, kernel_size, res_kernel_sz, stride
-    );
+        encoder, ctx0, inp, ratios, kernel_size, res_kernel_sz, stride);
 
     struct ggml_tensor * codes = encodec_forward_quantizer_encode(
-        quantizer, allocr, ctx0, encoded, n_bins, sr, bandwidth, hop_length
-    );
+        quantizer, ctx0, encoded, n_bins, sr, bandwidth, hop_length);
 
     struct ggml_tensor * quantized = encodec_forward_quantizer_decode(
-        quantizer, allocr, ctx0, codes, hidden_dim, n_bins, sr, bandwidth, hop_length
-    );
+        quantizer, ctx0, codes, hidden_dim, n_bins, sr, bandwidth, hop_length);
 
     struct ggml_tensor * decoded = encodec_forward_decoder(
-        decoder, allocr, ctx0, quantized, ratios, kernel_size, res_kernel_sz, stride
-    );
+        decoder, ctx0, quantized, ratios, kernel_size, res_kernel_sz, stride);
 
     switch (mode) {
         case encodec_run_mode_t::FULL: {
-            ggml_build_forward_expand(gf, decoded);
+            ggml_set_name(decoded, "decoded");
+            ggml_set_output(decoded);
+            ggml_build_forward_expand(gf.get(), decoded);
         } break;
         case encodec_run_mode_t::ENCODE: {
-            ggml_build_forward_expand(gf, codes);
+            ggml_set_name(codes, "codes");
+            ggml_set_output(codes);
+            ggml_build_forward_expand(gf.get(), codes);
         } break;
         case encodec_run_mode_t::DECODE: {
-            return NULL;
+            assert(false);
         } break;
         default: {
             fprintf(stderr, "%s: unknown run mode\n", __func__);
-            return NULL;
         } break;
     }
 
@@ -643,17 +625,17 @@ struct ggml_cgraph *encodec_build_graph(struct encodec_context *ectx,
     ectx->encoded = encoded;
     ectx->codes   = codes;
     ectx->decoded = decoded;
-
-    return gf;
 }
 
-struct ggml_cgraph *encodec_build_graph(struct encodec_context *ectx, const int32_t *codes,
-                                        const int n_codes, const encodec_run_mode_t mode) {
+void encodec_build_graph(struct encodec_context *ectx, const int32_t *codes,
+                         const int n_codes, const encodec_run_mode_t mode) {
     assert(mode == encodec_run_mode_t::DECODE);
 
     const auto & model   = ectx->model;
     const auto & hparams = model.hparams;
     const auto & allocr  = ectx->allocr;
+
+    auto & gf = ectx->gf;
 
     const int n_bins        = hparams.n_bins;
     const int sr            = hparams.sr;
@@ -670,52 +652,48 @@ struct ggml_cgraph *encodec_build_graph(struct encodec_context *ectx, const int3
 
     if (n_codes % n_q != 0) {
         fprintf(stderr, "%s: invalid number of codes\n", __func__);
-        return NULL;
+        assert(false);
     }
 
     const int N = n_codes / n_q;
 
-    // since we are using ggml-alloc, this buffer only needs enough space to hold the
-    // ggml_tensor and ggml_cgraph structs, but not the tensor data
-    static size_t buf_size = ggml_tensor_overhead() * GGML_MAX_NODES + ggml_graph_overhead();
+    static size_t buf_size = ggml_tensor_overhead() * ENCODEC_MAX_NODES + ggml_graph_overhead();
     static std::vector<uint8_t> buf(buf_size);
 
     struct ggml_init_params ggml_params = {
-        /*.mem_size   =*/buf_size,
-        /*.mem_buffer =*/buf.data(),
-        /*.no_alloc   =*/true,
+        /*.mem_size   =*/ buf_size,
+        /*.mem_buffer =*/ buf.data(),
+        /*.no_alloc   =*/ true,
     };
 
     struct ggml_context *ctx0 = ggml_init(ggml_params);
 
-    struct ggml_cgraph *gf = ggml_new_graph(ctx0);
+    gf = std::unique_ptr<struct ggml_cgraph, encodec_ggml_cgraph_deleter>(encodec_ggml_cgraph_create(ENCODEC_MAX_NODES));
 
     struct ggml_tensor *inp_codes = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, N, n_q);
-    ggml_allocr_alloc(allocr, inp_codes);
+    ggml_set_name(inp_codes, "inp_codes");
+    ggml_set_input(inp_codes);
 
-    // avoid writing to tensors if we are only measuring the memory usage
-    if (!ggml_allocr_is_measure(allocr)) {
-        ggml_backend_tensor_set(inp_codes, codes, 0, N * n_q * ggml_element_size(inp_codes));
-    }
-
-    const struct encodec_quantizer *quantizer = &model.quantizer;
-    const struct encodec_decoder   *decoder   = &model.decoder;
+    const struct encodec_quantizer * quantizer = &model.quantizer;
+    const struct encodec_decoder   * decoder   = &model.decoder;
 
     struct ggml_tensor *quantized = encodec_forward_quantizer_decode(
-        quantizer, allocr, ctx0, inp_codes, hidden_dim, n_bins, sr, bandwidth, hop_length
+        quantizer, ctx0, inp_codes, hidden_dim, n_bins, sr, bandwidth, hop_length
     );
 
     struct ggml_tensor *decoded = encodec_forward_decoder(
-        decoder, allocr, ctx0, quantized, ratios, kernel_size, res_kernel_sz, stride
+        decoder, ctx0, quantized, ratios, kernel_size, res_kernel_sz, stride
     );
 
     switch (mode) {
         case encodec_run_mode_t::DECODE: {
-            ggml_build_forward_expand(gf, decoded);
+            ggml_set_name(decoded, "decoded");
+            ggml_set_output(decoded);
+            ggml_build_forward_expand(gf.get(), decoded);
         } break;
         default: {
             fprintf(stderr, "%s: unknown run mode\n", __func__);
-            return NULL;
+            assert(false);
         } break;
     }
 
@@ -723,8 +701,11 @@ struct ggml_cgraph *encodec_build_graph(struct encodec_context *ectx, const int3
 
     ectx->codes   = inp_codes;
     ectx->decoded = decoded;
+}
 
-    return gf;
+static void encodec_zero_tensor(struct ggml_cgraph *gf, const char *name) {
+    struct ggml_tensor *tensor = ggml_graph_get_tensor(gf, name);
+    ggml_set_zero(tensor);
 }
 
 bool encodec_eval_internal(struct encodec_context *ectx, const float * raw_audio,
@@ -732,25 +713,36 @@ bool encodec_eval_internal(struct encodec_context *ectx, const float * raw_audio
                            const encodec_run_mode_t mode) {
     auto & model  = ectx->model;
     auto & allocr = ectx->allocr;
+    auto & gf     = ectx->gf;
 
-    // reset the allocator to free all the memory allocated during the previous inference
-    ggml_allocr_reset(allocr);
+    encodec_build_graph(ectx, raw_audio, n_samples, mode);
 
-    struct ggml_cgraph *gf = encodec_build_graph(ectx, raw_audio, n_samples, mode);
+    // allocate the graph tensors
+    ggml_gallocr_alloc_graph(allocr, gf.get());
 
-    // allocate tensors
-    ggml_allocr_alloc_graph(allocr, gf);
+    // set the graph inputs
+    struct ggml_tensor * inp = ggml_graph_get_tensor(gf.get(), "inp");
+    ggml_backend_tensor_set(inp, raw_audio, 0, n_samples * ggml_element_size(inp));
+
+    // make sure accumulation tensor are zeroed
+    encodec_zero_tensor(gf.get(), "enc_l0_ht");
+    encodec_zero_tensor(gf.get(), "enc_l1_ht");
+    encodec_zero_tensor(gf.get(), "enc_l0_ct");
+    encodec_zero_tensor(gf.get(), "enc_l1_ct");
+
+    encodec_zero_tensor(gf.get(), "dec_l0_ht");
+    encodec_zero_tensor(gf.get(), "dec_l1_ht");
+    encodec_zero_tensor(gf.get(), "dec_l0_ct");
+    encodec_zero_tensor(gf.get(), "dec_l1_ct");
+
+    encodec_zero_tensor(gf.get(), "quantized_out");
 
     // run the computation
     if (ggml_backend_is_cpu(model.backend)) {
         ggml_backend_cpu_set_n_threads(model.backend, n_threads);
     }
-#ifdef GGML_USE_METAL
-    if (ggml_backend_is_metal(model.backend)) {
-        ggml_backend_metal_set_n_cb(model.backend, n_threads);
-    }
-#endif
-    ggml_backend_graph_compute(model.backend, gf);
+
+    ggml_backend_graph_compute(model.backend, gf.get());
 
     return true;
 }
@@ -760,25 +752,36 @@ bool encodec_eval_internal(struct encodec_context *ectx, const int32_t *codes,
                            const encodec_run_mode_t mode) {
     auto & model  = ectx->model;
     auto & allocr = ectx->allocr;
+    auto & gf     = ectx->gf;
 
-    // reset the allocator to free all the memory allocated during the previous inference
-    ggml_allocr_reset(allocr);
+    encodec_build_graph(ectx, codes, n_codes, mode);
 
-    struct ggml_cgraph *gf = encodec_build_graph(ectx, codes, n_codes, mode);
+    // allocate the graph tensors
+    ggml_gallocr_alloc_graph(allocr, gf.get());
 
-    // allocate tensors
-    ggml_allocr_alloc_graph(allocr, gf);
+    // set the graph inputs
+    struct ggml_tensor * inp = ggml_graph_get_tensor(gf.get(), "inp_codes");
+    ggml_backend_tensor_set(inp, codes, 0, n_codes * ggml_element_size(inp));
+
+    // make sure accumulation tensor are zeroed
+    encodec_zero_tensor(gf.get(), "enc_l0_ht");
+    encodec_zero_tensor(gf.get(), "enc_l1_ht");
+    encodec_zero_tensor(gf.get(), "enc_l0_ct");
+    encodec_zero_tensor(gf.get(), "enc_l1_ct");
+
+    encodec_zero_tensor(gf.get(), "dec_l0_ht");
+    encodec_zero_tensor(gf.get(), "dec_l1_ht");
+    encodec_zero_tensor(gf.get(), "dec_l0_ct");
+    encodec_zero_tensor(gf.get(), "dec_l1_ct");
+
+    encodec_zero_tensor(gf.get(), "quantized_out");
 
     // run the computation
     if (ggml_backend_is_cpu(model.backend)) {
         ggml_backend_cpu_set_n_threads(model.backend, n_threads);
     }
-#ifdef GGML_USE_METAL
-    if (ggml_backend_is_metal(model.backend)) {
-        ggml_backend_metal_set_n_cb(model.backend, n_threads);
-    }
-#endif
-    ggml_backend_graph_compute(model.backend, gf);
+
+    ggml_backend_graph_compute(model.backend, gf.get());
 
     return true;
 }
@@ -790,21 +793,15 @@ bool encodec_eval(struct encodec_context *ectx, const float *raw_audio,
 
     // allocate the compute buffer
     {
-        // alignment required by the backend
-        size_t align = ggml_backend_get_alignment(ectx->model.backend);
-        ectx->allocr = ggml_allocr_new_measure(align);
+        // create a graph allocator with the backend's default buffer type
+        ectx->allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(ectx->model.backend));
 
         // create the graph for memory usage estimation
-        struct ggml_cgraph *gf = encodec_build_graph(ectx, raw_audio, n_samples, mode);
+        encodec_build_graph(ectx, raw_audio, n_samples, mode);
 
-        // compute the required memory
-        size_t mem_size = ggml_allocr_alloc_graph(ectx->allocr, gf);
-
-        // recreate the allocator with the required memory
-        ggml_allocr_free(ectx->allocr);
-        ectx->buf_compute = ggml_backend_alloc_buffer(ectx->model.backend, mem_size);
-        ectx->allocr = ggml_allocr_new_from_buffer(ectx->buf_compute);
-
+        // pre-allocate the compute buffer
+        ggml_gallocr_reserve(ectx->allocr, ectx->gf.get());
+        size_t mem_size = ggml_gallocr_get_buffer_size(ectx->allocr, 0);
         fprintf(stderr, "%s: compute buffer size: %.2f MB\n\n", __func__, mem_size / 1024.0 / 1024.0);
     }
 
@@ -826,23 +823,18 @@ bool encodec_eval(struct encodec_context *ectx, const int32_t *codes,
 
     // allocate the compute buffer
     {
-        // alignment required by the backend
-        size_t align = ggml_backend_get_alignment(ectx->model.backend);
-        ectx->allocr = ggml_allocr_new_measure(align);
+        // create a graph allocator with the backend's default buffer type
+        ectx->allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(ectx->model.backend));
 
         // create the graph for memory usage estimation
-        struct ggml_cgraph *gf = encodec_build_graph(ectx, codes, n_codes, mode);
+        encodec_build_graph(ectx, codes, n_codes, mode);
 
-        // compute the required memory
-        size_t mem_size = ggml_allocr_alloc_graph(ectx->allocr, gf);
-
-        // recreate the allocator with the required memory
-        ggml_allocr_free(ectx->allocr);
-        ectx->buf_compute = ggml_backend_alloc_buffer(ectx->model.backend, mem_size);
-        ectx->allocr = ggml_allocr_new_from_buffer(ectx->buf_compute);
-
+        // pre-allocate the compute buffer
+        ggml_gallocr_reserve(ectx->allocr, ectx->gf.get());
+        size_t mem_size = ggml_gallocr_get_buffer_size(ectx->allocr, 0);
         fprintf(stderr, "%s: compute buffer size: %.2f MB\n\n", __func__, mem_size / 1024.0 / 1024.0);
     }
+
 
     // encodec eval
     if (!encodec_eval_internal(ectx, codes, n_codes, n_threads, mode)) {
