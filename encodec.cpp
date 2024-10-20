@@ -501,6 +501,9 @@ bool encodec_load_model_weights(std::ifstream &infile, encodec_model &model, int
     return true;
 }
 
+// Create a new ggml_cgraph with the given size (usually ENCODEC_MAX_NODES). We need a
+// custom function since the graph is so large, it overpasses the max built-in ggml
+// default size.
 static struct ggml_cgraph * encodec_ggml_cgraph_create(size_t size) {
     struct ggml_cgraph * cgraph = (struct ggml_cgraph *)calloc(1, sizeof(struct ggml_cgraph));
     cgraph->size = size;
