@@ -23,11 +23,12 @@ option(ENCODEC_BUILD_EXAMPLES "encodec: build examples" ${ENCODEC_STANDALONE})
 # Build libraries
 
 set(ENCODEC_LIB encodec)
+option(BUILD_SHARED_LIBS "build shared libraries" OFF)
 
 add_subdirectory(ggml)
 
 add_library(
-    ${ENCODEC_LIB} STATIC
+    ${ENCODEC_LIB}
     encodec.cpp
     encodec.h
     encoder.h
