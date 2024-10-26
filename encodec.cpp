@@ -705,7 +705,9 @@ void encodec_build_graph(struct encodec_context *ectx, const int32_t *codes,
 
 static void encodec_zero_tensor(struct ggml_cgraph *gf, const char *name) {
     struct ggml_tensor *tensor = ggml_graph_get_tensor(gf, name);
-    ggml_set_zero(tensor);
+    // create a zero array
+    // ggml_backend_tensor_set(tensor, zeros, 0, tensor->ne * ggml_element_size(tensor));
+    // ggml_set_zero(tensor);
 }
 
 bool encodec_eval_internal(struct encodec_context *ectx, const float * raw_audio,

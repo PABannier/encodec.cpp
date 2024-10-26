@@ -58,9 +58,8 @@ struct ggml_tensor *encodec_forward_quantizer_encode(
         // [seq_length, n_bins]
         struct ggml_tensor *dist = ggml_add(ctx0, ggml_repeat(ctx0, sqr_inp_nrm, dp), dp);
         dist = ggml_add(ctx0, ggml_repeat(ctx0, ggml_transpose(ctx0, sqr_embed_nrm), dist), dist);
-        dist = ggml_neg(ctx0, dist);
+        dist = ggml_scale(ctx0, dist, -1.0f);
 
-        // take the argmax over the column dimension
         // [seq_length]
         indices = ggml_argmax(ctx0, dist);
 
