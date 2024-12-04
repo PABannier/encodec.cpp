@@ -1,5 +1,6 @@
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
+#include "ggml-cpu.h"
 #include "ggml.h"
 #include "ggml/src/ggml-impl.h"
 
