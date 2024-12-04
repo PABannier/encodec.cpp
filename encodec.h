@@ -48,10 +48,9 @@ extern "C" {
      * @param n_gpu_layers The number of GPU layers to use.
      * @return A pointer to the encodec context struct.
      */
-    struct encodec_context *encodec_load_model(
-        const char *model_path,
-        const int offset,
-        int n_gpu_layers);
+    struct encodec_context * encodec_load_model(const char * model_path,
+                                                 const int   offset,
+                                                       int   n_gpu_layers);
 
     /**
      * Sets the target bandwidth for the given encodec context.
@@ -59,9 +58,8 @@ extern "C" {
      * @param ectx The encodec context to set the target bandwidth for.
      * @param bandwidth The target bandwidth to set, in bits per second.
      */
-    void encodec_set_target_bandwidth(
-        struct encodec_context *ectx,
-        int bandwidth);
+    void encodec_set_target_bandwidth(struct encodec_context * ectx,
+                                                         int   bandwidth);
 
     /**
      * Sets the sample rate for the given encodec context.
@@ -69,9 +67,8 @@ extern "C" {
      * @param ectx The encodec context to set the target bandwidth for.
      * @param sample_rate The sample rate to set.
      */
-    void encodec_set_sample_rate(
-        struct encodec_context *ectx,
-        int sample_rate);
+    void encodec_set_sample_rate(struct encodec_context * ectx,
+                                                    int   sample_rate);
 
     /**
      * Reconstructs audio from raw audio data using the specified encodec context.
@@ -82,11 +79,10 @@ extern "C" {
      * @param n_threads The number of threads to use for reconstruction.
      * @return True if the reconstruction was successful, false otherwise.
      */
-    bool encodec_reconstruct_audio(
-        struct encodec_context *ectx,
-        const float *raw_audio,
-        const int n_samples,
-        int n_threads);
+    bool encodec_reconstruct_audio(struct encodec_context * ectx,
+                                              const float * raw_audio,
+                                                const int   n_samples,
+                                                      int   n_threads);
 
     /**
      * Compresses audio data using the specified encodec context.
@@ -97,11 +93,10 @@ extern "C" {
      * @param n_threads The number of threads to use for compression.
      * @return True if the compression was successful, false otherwise.
      */
-    bool encodec_compress_audio(
-        struct encodec_context *ectx,
-        const float *raw_audio,
-        const int n_samples,
-        int n_threads);
+    bool encodec_compress_audio(struct encodec_context * ectx,
+                                           const float * raw_audio,
+                                             const int   n_samples,
+                                                   int   n_threads);
 
     /**
      * Decompresses audio data using the specified encodec context.
@@ -112,11 +107,10 @@ extern "C" {
      * @param n_threads The number of threads to use for decompression.
      * @return True if the audio data was successfully decompressed, false otherwise.
      */
-    bool encodec_decompress_audio(
-        struct encodec_context *ectx,
-        const int32_t *codes,
-        const int n_codes,
-        int n_threads);
+    bool encodec_decompress_audio(struct encodec_context * ectx,
+                                           const int32_t * codes,
+                                               const int   n_codes,
+                                                     int   n_threads);
 
     /**
      * Gets the audio data from the given encodec context.
@@ -124,8 +118,7 @@ extern "C" {
      * @param ectx The encodec context to get the audio data from.
      * @return A pointer to the audio data.
     */
-    float * encodec_get_audio(
-        struct encodec_context *ectx);
+    float * encodec_get_audio(struct encodec_context * ectx);
 
     /**
      * Gets the size of the audio data from the given encodec context.
@@ -133,8 +126,7 @@ extern "C" {
      * @param ectx The encodec context to get the audio size from.
      * @return The size of the audio data.
     */
-    int encodec_get_audio_size(
-        struct encodec_context *ectx);
+    int encodec_get_audio_size(struct encodec_context * ectx);
 
     /**
      * Gets the code data from the given encodec context.
@@ -142,8 +134,7 @@ extern "C" {
      * @param ectx The encodec context to get the code data from.
      * @return A pointer to the code data.
     */
-    int32_t * encodec_get_codes(
-        struct encodec_context *ectx);
+    int32_t * encodec_get_codes(struct encodec_context * ectx);
 
     /**
      * Gets the size of the code data from the given encodec context.
@@ -151,8 +142,7 @@ extern "C" {
      * @param ectx The encodec context to get the code size from.
      * @return The size of the code data.
     */
-    int encodec_get_codes_size(
-        struct encodec_context *ectx);
+    int encodec_get_codes_size(struct encodec_context * ectx);
 
     /**
      * Gets the statistics for the given encodec context.
@@ -160,24 +150,21 @@ extern "C" {
      * @param ectx The encodec context to get the statistics for.
      * @return A pointer to the statistics struct.
     */
-    const struct encodec_statistics* encodec_get_statistics(
-        struct encodec_context *ectx);
+    const struct encodec_statistics * encodec_get_statistics(struct encodec_context * ectx);
 
     /**
      * Reset the statistics for the given encodec context.
      *
      * @param ectx The encodec context to reset the statistics for.
     */
-   void encodec_reset_statistics(
-        struct encodec_context *ectx);
+   void encodec_reset_statistics(struct encodec_context * ectx);
 
     /**
      * @brief Frees the memory allocated for an encodec context.
      *
      * @param ectx The encodec context to free.
      */
-    void encodec_free(
-        struct encodec_context *ectx);
+    void encodec_free(struct encodec_context * ectx);
 
 #ifdef __cplusplus
 }
