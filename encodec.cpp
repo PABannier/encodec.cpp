@@ -716,6 +716,8 @@ bool encodec_eval_internal(struct encodec_context * ectx,
                                         const int   n_samples,
                                         const int   n_threads,
                          const encodec_run_mode_t   mode) {
+    assert(mode == encodec_run_mode_t::FULL || mode == encodec_run_mode_t::ENCODE);
+  
     auto & model  = ectx->model;
     auto & allocr = ectx->allocr;
     auto & gf     = ectx->gf;
@@ -735,12 +737,14 @@ bool encodec_eval_internal(struct encodec_context * ectx,
     encodec_zero_tensor(gf.get(), "enc_l0_ct");
     encodec_zero_tensor(gf.get(), "enc_l1_ct");
 
-    encodec_zero_tensor(gf.get(), "dec_l0_ht");
-    encodec_zero_tensor(gf.get(), "dec_l1_ht");
-    encodec_zero_tensor(gf.get(), "dec_l0_ct");
-    encodec_zero_tensor(gf.get(), "dec_l1_ct");
+    if (mode == encodec_run_mode_t::FULL) {
+        encodec_zero_tensor(gf.get(), "dec_l0_ht");
+        encodec_zero_tensor(gf.get(), "dec_l1_ht");
+        encodec_zero_tensor(gf.get(), "dec_l0_ct");
+        encodec_zero_tensor(gf.get(), "dec_l1_ct");
 
-    encodec_zero_tensor(gf.get(), "quantized_out");
+        encodec_zero_tensor(gf.get(), "quantized_out");
+    }
 
     // run the computation
     if (ggml_backend_is_cpu(model.backend)) {
@@ -757,6 +761,8 @@ bool encodec_eval_internal(struct encodec_context * ectx,
                                         const int   n_codes,
                                         const int   n_threads,
                          const encodec_run_mode_t   mode) {
+    assert(mode == encodec_run_mode_t::DECODE);
+
     auto & model  = ectx->model;
     auto & allocr = ectx->allocr;
     auto & gf     = ectx->gf;
@@ -770,12 +776,7 @@ bool encodec_eval_internal(struct encodec_context * ectx,
     struct ggml_tensor * inp = ggml_graph_get_tensor(gf.get(), "inp_codes");
     ggml_backend_tensor_set(inp, codes, 0, n_codes * ggml_element_size(inp));
 
-    // make sure accumulation tensor are zeroed
-    encodec_zero_tensor(gf.get(), "enc_l0_ht");
-    encodec_zero_tensor(gf.get(), "enc_l1_ht");
-    encodec_zero_tensor(gf.get(), "enc_l0_ct");
-    encodec_zero_tensor(gf.get(), "enc_l1_ct");
-
+    // make sure accumulation tensors are zeroed
     encodec_zero_tensor(gf.get(), "dec_l0_ht");
     encodec_zero_tensor(gf.get(), "dec_l1_ht");
     encodec_zero_tensor(gf.get(), "dec_l0_ct");
@@ -845,7 +846,6 @@ bool encodec_eval(struct encodec_context * ectx,
         size_t mem_size = ggml_gallocr_get_buffer_size(ectx->allocr, 0);
         fprintf(stderr, "%s: compute buffer size: %.2f MB\n\n", __func__, mem_size / 1024.0 / 1024.0);
     }
-
 
     // encodec eval
     if (!encodec_eval_internal(ectx, codes, n_codes, n_threads, mode)) {
