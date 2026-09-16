@@ -61,6 +61,8 @@ cmake -DGGML_METAL=ON -DBUILD_SHARED_LIBS=Off ..
 cmake --build . --config Release
 ```
 
+Once built, pass the `--n-gpu-layers` flag with a value greather than 0 to the executable.
+
 ### Using cuBLAS
 
 The inference can be offloaded on a CUDA backend with cuBLAS.
