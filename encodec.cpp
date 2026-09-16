@@ -441,6 +441,11 @@ bool encodec_load_model_weights(std::ifstream &infile, encodec_model &model, int
                 break;
             }
 
+            if (n_dims < 1 || n_dims > 3) {
+                  fprintf(stderr, "%s: invalid n_dims %d in model file (expected 1 <= n_dims <= 3)\n", __func__, n_dims);
+                  return false;
+            }
+
             int32_t nelements = 1;
             int32_t ne[3] = {1, 1, 1};
             for (int i = 0; i < n_dims; i++) {
